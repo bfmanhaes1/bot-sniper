@@ -39,23 +39,27 @@ https://web-production-77454.up.railway.app/webhook/<MOEDA>
 
 **Substitua `<MOEDA>` por:** BTC, BNB, ETH, SOL, VIRTUAL, LINK, AVAX, NEAR, APT, BGB
 
-**Payload JSON:**
+> ⚠️ **IMPORTANTE — não use `{{plot("RSI")}}` nem `{{strategy.order.action}}`.**
+> Esses placeholders **não existem** no indicador TSTS Sniper. Quando o TradingView não os encontra, deixa o campo vazio e o JSON quebra (erro **"Expected '}'"**). Como o TSTS Sniper é um *indicador* (study) e não uma *strategy*, `{{strategy.order.action}}` também fica vazio.
+>
+> **Solução:** `action` é **fixo** — você já sabe a direção pelo nome do alerta (UP = buy, DOWN = sell). Crie **dois alertas separados** por moeda+TF: um para o cruzamento Pink×Blue **pra cima** e outro **pra baixo**.
+
+**Payload JSON — Pink × Blue UP (compra):**
 ```json
-{
-  "action": "{{strategy.order.action}}",
-  "timeframe": "{{interval}}",
-  "rsi": {{plot("RSI")}},
-  "rsi_ma": {{plot("RSI_MA")}},
-  "entry": {{close}}
-}
+{"action":"buy","timeframe":"{{interval}}","entry":{{close}}}
+```
+
+**Payload JSON — Pink × Blue DOWN (venda):**
+```json
+{"action":"sell","timeframe":"{{interval}}","entry":{{close}}}
 ```
 
 **Descrição dos campos:**
-- `action` → "buy" ou "sell" (gerado pelo indicador TSTS Sniper)
-- `timeframe` → "1", "5" ou "15" (em minutos, o bot converte automaticamente)
-- `rsi` → valor atual do RSI(14)
-- `rsi_ma` → valor atual da média do RSI(14)
-- `entry` → preço de fechamento da vela
+- `action` → **fixo** "buy" (alerta UP) ou "sell" (alerta DOWN)
+- `timeframe` → `{{interval}}` (placeholder universal — o bot converte automaticamente)
+- `entry` → `{{close}}` (preço de fechamento da vela; opcional — se faltar, o bot busca o preço público da Bitget)
+
+**Campos opcionais:** `rsi` e `rsi_ma` **não são necessários** e devem ser omitidos (evita o erro de JSON).
 
 ---
 
@@ -70,29 +74,19 @@ https://web-production-77454.up.railway.app/rsi/<MOEDA>
 
 **Payload JSON (RSI cruza pra cima):**
 ```json
-{
-  "direction": "up",
-  "timeframe": "{{interval}}",
-  "rsi": {{plot("RSI")}},
-  "rsi_ma": {{plot("RSI_MA")}}
-}
+{"direction":"up","timeframe":"{{interval}}"}
 ```
 
 **Payload JSON (RSI cruza pra baixo):**
 ```json
-{
-  "direction": "down",
-  "timeframe": "{{interval}}",
-  "rsi": {{plot("RSI")}},
-  "rsi_ma": {{plot("RSI_MA")}}
-}
+{"direction":"down","timeframe":"{{interval}}"}
 ```
 
 **Descrição dos campos:**
-- `direction` → "up" (RSI cruza média pra cima) ou "down" (RSI cruza média pra baixo)
-- `timeframe` → "1", "5" ou "15" (em minutos)
-- `rsi` → valor atual do RSI(14)
-- `rsi_ma` → valor atual da média do RSI(14)
+- `direction` → **fixo** "up" (RSI cruza média pra cima) ou "down" (RSI cruza média pra baixo)
+- `timeframe` → `{{interval}}` (placeholder universal)
+
+> ⚠️ **Não inclua `rsi`/`rsi_ma` com `{{plot(...)}}`.** Se o seu indicador de RSI não expuser esses plots com esse nome exato, o campo fica vazio e quebra o JSON. Esses valores são opcionais para o bot.
 
 ---
 
@@ -117,19 +111,14 @@ https://web-production-77454.up.railway.app/rsi/<MOEDA>
    ```
    https://web-production-77454.up.railway.app/webhook/BTC
    ```
-8. **Message (payload JSON):**
+8. **Message (payload JSON):** — para o alerta de cruzamento **pra cima** (compra):
    ```json
-   {
-     "action": "{{strategy.order.action}}",
-     "timeframe": "{{interval}}",
-     "rsi": {{plot("RSI")}},
-     "rsi_ma": {{plot("RSI_MA")}},
-     "entry": {{close}}
-   }
+   {"action":"buy","timeframe":"{{interval}}","entry":{{close}}}
    ```
+   (para o alerta de cruzamento **pra baixo**, troque `"buy"` por `"sell"`)
 9. **Nome do alerta (sugestão):**
    ```
-   [SNIPER] BTC 5m - TSTS
+   [SNIPER] BTC 5m - TSTS UP
    ```
 10. **Clique em "Criar"**
 
@@ -150,12 +139,7 @@ https://web-production-77454.up.railway.app/rsi/<MOEDA>
    ```
 7. **Message (payload JSON):**
    ```json
-   {
-     "direction": "up",
-     "timeframe": "{{interval}}",
-     "rsi": {{plot("RSI")}},
-     "rsi_ma": {{plot("RSI_MA")}}
-   }
+   {"direction":"up","timeframe":"{{interval}}"}
    ```
 8. **Nome do alerta (sugestão):**
    ```
@@ -178,12 +162,7 @@ https://web-production-77454.up.railway.app/rsi/<MOEDA>
    ```
 5. **Message (payload JSON):**
    ```json
-   {
-     "direction": "down",
-     "timeframe": "{{interval}}",
-     "rsi": {{plot("RSI")}},
-     "rsi_ma": {{plot("RSI_MA")}}
-   }
+   {"direction":"down","timeframe":"{{interval}}"}
    ```
 6. **Nome do alerta (sugestão):**
    ```

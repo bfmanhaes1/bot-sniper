@@ -46,35 +46,26 @@ https://img.bgstatic.com/multiLang/image/social/e54cfb12e41b01b5848d7e68a847f5c1
 
 ## 📦 Payloads JSON (copiar e colar)
 
-### TSTS Sniper (linha rosa × azul)
+> ⚠️ **NÃO use `{{plot("RSI")}}` nem `{{strategy.order.action}}`.** Esses placeholders não existem no indicador TSTS Sniper e deixam o JSON quebrado ("Expected '}'"). Use os payloads mínimos abaixo — `action`/`direction` são **fixos** (você já sabe a direção pelo nome do alerta), e `{{interval}}` + `{{close}}` funcionam em qualquer alerta.
+
+### 🟢 TSTS Sniper — Pink × Blue **UP** (compra)
 ```json
-{
-  "action": "{{strategy.order.action}}",
-  "timeframe": "{{interval}}",
-  "rsi": {{plot("RSI")}},
-  "rsi_ma": {{plot("RSI_MA")}},
-  "entry": {{close}}
-}
+{"action":"buy","timeframe":"{{interval}}","entry":{{close}}}
 ```
 
-### RSI cruza pra cima
+### 🔴 TSTS Sniper — Pink × Blue **DOWN** (venda)
 ```json
-{
-  "direction": "up",
-  "timeframe": "{{interval}}",
-  "rsi": {{plot("RSI")}},
-  "rsi_ma": {{plot("RSI_MA")}}
-}
+{"action":"sell","timeframe":"{{interval}}","entry":{{close}}}
 ```
 
-### RSI cruza pra baixo
+### 🟢 RSI cruza pra **cima**
 ```json
-{
-  "direction": "down",
-  "timeframe": "{{interval}}",
-  "rsi": {{plot("RSI")}},
-  "rsi_ma": {{plot("RSI_MA")}}
-}
+{"direction":"up","timeframe":"{{interval}}"}
+```
+
+### 🔴 RSI cruza pra **baixo**
+```json
+{"direction":"down","timeframe":"{{interval}}"}
 ```
 
 ---
