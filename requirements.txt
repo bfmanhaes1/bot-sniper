@@ -1,0 +1,6 @@
+# Dependências do sistema de trading híbrido
+# Instale com: pip install -r requirements.txt
+
+Flask==3.0.3
+requests==2.31.0
+gunicorn==21.2.0

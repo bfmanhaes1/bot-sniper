@@ -1,0 +1,13 @@
+# Nunca comitar credenciais reais nem logs
+secrets.json
+.env
+logs/
+*.log
+__pycache__/
+*.pyc
+.maintenance
+managed_positions.json
+
+# Logs diários do modo sombra (efêmeros; resumo durável vai ao Telegram)
+crypto2_logs/*.json
+crypto2_logs/*.md

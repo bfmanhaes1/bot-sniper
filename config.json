@@ -1,0 +1,107 @@
+{
+  "modo": "sombra",
+  "_comentario_modo": "sombra = MODO SOMBRA. O bot NUNCA envia ordens reais para a Bitget. Ele apenas recebe os alertas (TSTS + RSI) do TradingView, decide (entrar/aguardar) via motor de RSI, SIMULA a entrada/saida e registra tudo em crypto_logs/. Objetivo: coletar 30 dias de dados para backtest.",
+  "bot_id": "BOT-SNIPER",
+  "bot_label": "🎯 Bot SNIPER",
+  "strategy": "TSTS Sniper + RSI",
+  "MODO_SOMBRA": true,
+  "_comentario_MODO_SOMBRA": "TRAVA DE SEGURANCA. true = NENHUMA ordem real e enviada para a Bitget em hipotese alguma. Mantenha SEMPRE true durante a coleta de dados.",
+  "modo_autonomo": false,
+  "_comentario_modo_autonomo": "true = o bot CALCULA os proprios sinais a partir dos candles publicos da Bitget (RSI x MA + TSTS-proxy WaveTrend/HMA), rodando as 60 combinacoes SOZINHO, sem depender de nenhum alerta do TradingView. Esta e a forma de ter 1 unico bot coletando dados das 10 moedas.",
+  "aceitar_webhooks": true,
+  "_comentario_aceitar_webhooks": "true = o bot RECEBE os alertas do TradingView (TSTS Sniper real via /webhook/<moeda> e cruzamento de RSI via /rsi/<moeda>). Esta e a fonte OFICIAL dos sinais: o TSTS e um indicador fechado e nao segue padrao decodificavel, portanto o sinal PRECISA vir do TradingView. Para as 10 moedas gerarem dados, crie o alerta de cada uma no TradingView apontando para a URL do bot.",
+  "_comentario_modo_autonomo_desligado": "O modo_autonomo (proxy WaveTrend/HMA/RSI) foi DESLIGADO de proposito: ele nao reproduz o TSTS real (que dispara de forma irregular, sem cadencia fixa). O codigo do scanner continua no repo apenas como referencia/experimento, mas NAO roda enquanto modo_autonomo=false.",
+  "dedup_sinal_segundos": 90,
+  "_comentario_dedup": "Ignora um SINAL identico (moeda+tf+acao) repetido dentro desta janela (protege contra duplicacao caso scanner e webhook coincidam).",
+  "scanner": {
+    "intervalo_segundos": 25,
+    "_comentario_intervalo": "De quanto em quanto tempo o scanner varre as 30 combinacoes moeda+TF. Cada combinacao so gera sinal quando um NOVO candle FECHA (Once Per Bar Close).",
+    "exigir_hma_alinhada": true,
+    "_comentario_hma": "true = so gera BUY se a HMA(15) estiver subindo (e SELL se estiver caindo). Filtro que aproxima o comportamento do TSTS e reduz sinais falsos.",
+    "exigir_rsi_lado": true,
+    "_comentario_rsi_lado": "true = so gera BUY com RSI>=50 e SELL com RSI<=50.",
+    "usar_wavetrend": true,
+    "_comentario_wt": "true = gatilho principal e o cruzamento do WaveTrend/Market Cipher (wt1 x wt2). false = usa a virada de inclinacao da HMA como gatilho.",
+    "pausa_entre_requisicoes_seg": 0.15,
+    "_comentario_pausa": "Pequena pausa entre as chamadas ao endpoint publico da Bitget (gentileza com a API)."
+  },
+  "moedas": [
+    "BTC",
+    "BNB",
+    "ETH",
+    "SOL",
+    "VIRTUAL",
+    "LINK",
+    "AVAX",
+    "NEAR",
+    "APT",
+    "BGB"
+  ],
+  "_comentario_moedas": "10 moedas monitoradas. APT = Aptos (o pedido citava 'APTO', interpretado como APT/Aptos).",
+  "timeframes": [
+    "1m",
+    "5m",
+    "15m"
+  ],
+  "_comentario_timeframes": "3 timeframes por moeda.",
+  "alavancagens": [
+    5,
+    10
+  ],
+  "_comentario_alavancagens": "2 alavancagens simuladas por sinal. 10 moedas x 3 TFs x 2 alavancagens = 60 combinacoes.",
+  "symbols_bitget": {
+    "BTC": "BTCUSDT",
+    "BNB": "BNBUSDT",
+    "ETH": "ETHUSDT",
+    "SOL": "SOLUSDT",
+    "VIRTUAL": "VIRTUALUSDT",
+    "LINK": "LINKUSDT",
+    "AVAX": "AVAXUSDT",
+    "NEAR": "NEARUSDT",
+    "APT": "APTUSDT",
+    "BGB": "BGBUSDT"
+  },
+  "_comentario_symbols": "Mapa moeda -> simbolo do contrato perpetuo USDT na Bitget (usado SOMENTE para consultar preco publico e simular TP/SL; nunca para operar).",
+  "simulacao": {
+    "margin_usdt": 50,
+    "_comentario_margin": "Margem simulada por trade (USDT). Usada apenas para calcular o P&L simulado.",
+    "tp_percent": 2.0,
+    "_comentario_tp": "Take Profit simulado (% sobre o preco de entrada). Ponto de partida para o estudo de saida.",
+    "sl_percent": 1.0,
+    "_comentario_sl": "Stop Loss simulado (% sobre o preco de entrada). Ponto de partida para o estudo de saida.",
+    "poll_price_minutes": 5,
+    "_comentario_poll": "De quanto em quanto tempo (minutos) o monitor consulta o preco publico da Bitget para verificar se o TP/SL simulado foi atingido nas posicoes simuladas abertas."
+  },
+  "engine": {
+    "require_fresh_cross_bars": 3,
+    "_comentario_fresh": "MODELO SNIPER: 3 = quando o sinal TSTS Sniper (cruzamento linha rosa x azul) chega, o RSI ja pode ter cruzado a sua media ATE 3 velas ANTES e ainda vale como entrada imediata. Se o cruzamento do RSI foi ha mais de 3 velas (estado antigo), o motor NAO entra na hora: segura o sinal e so entra quando o RSI cruzar de novo na direcao certa (ou expirar por pending_timeout_bars).",
+    "pending_timeout_bars": 12,
+    "_comentario_pending": "Um sinal segurado expira depois de N barras sem o cruzamento do RSI. 0 = nunca expira.",
+    "analise_ativa": false,
+    "_comentario_analise": "MODELO SNIPER: false = entrada DIRETA. O TSTS Sniper manda o cruzamento rosa x azul (buy/sell) e o bot entra assim que o RSI(14) x media(RSI 14) estiver do lado certo (cruzamento ate 3 velas antes ou logo depois). NAO ha estudo de 1o/2o/3o cruzamento (isso e do Bot RIFLE).",
+    "max_cruzamentos": 3,
+    "_comentario_max": "Nao usado quando analise_ativa=false (modelo SNIPER e entrada direta).",
+    "anti_empilhamento": true,
+    "posicao_timeout_min": 240,
+    "_comentario_timeout_pos": "Minutos ate considerar a posicao simulada encerrada por tempo (evita travar a combinacao para sempre)."
+  },
+  "analise": {
+    "modo": "regras",
+    "_comentario_modo": "Como o agente decide no 1o/2o cruzamento em modo sombra. 'regras' = heuristica de custo zero (recomendado). O resultado e apenas REGISTRADO (sombra), nunca executa ordem real."
+  },
+  "telegram": {
+    "bot_token": "LOADED_FROM_SECRETS",
+    "chat_id": 1883423660,
+    "resumo_diario_hora_utc": 23,
+    "resumo_diario_minuto_utc": 59,
+    "_comentario_resumo": "Horario (UTC) do resumo diario. Em modo sombra NAO ha notificacao por sinal: apenas 1 resumo por dia."
+  },
+  "telegram_chat_id": 1883423660,
+  "settings": {
+    "product_type": "USDT-FUTURES",
+    "margin_coin": "USDT",
+    "dry_run": true,
+    "execute_all_signals": false,
+    "signal_source": "tsts_sniper_pink_blue_rsi_sombra"
+  }
+}
