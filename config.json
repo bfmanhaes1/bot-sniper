@@ -72,6 +72,24 @@
     "poll_price_minutes": 5,
     "_comentario_poll": "De quanto em quanto tempo (minutos) o monitor consulta o preco publico da Bitget para verificar se o TP/SL simulado foi atingido nas posicoes simuladas abertas."
   },
+  "simulacao_por_tf": {
+    "_comentario": "TP/SL calibrados POR TIMEFRAME a partir das excursoes reais (MFE/DD) de 5 dias. Se um TF nao estiver aqui, o motor usa o tp_percent/sl_percent global de 'simulacao'. Valores em % sobre o preco de entrada.",
+    "1m": {
+      "tp_percent": 0.30,
+      "sl_percent": 0.50,
+      "_perfil": "scalping — TP ~p75 do MFE (0.302%), SL entre p75/p90 do DD. Alavancagem sugerida 5x."
+    },
+    "5m": {
+      "tp_percent": 0.60,
+      "sl_percent": 1.00,
+      "_perfil": "scalping — TP mediana/p75 do MFE, SL ~p90 do DD (1.016%). Alavancagem sugerida 5x."
+    },
+    "15m": {
+      "tp_percent": 0.80,
+      "sl_percent": 1.20,
+      "_perfil": "swing — TP mediana/p75 do MFE (0.75-1.09%), SL ~p90 do DD (1.13%). Alavancagem sugerida 10x."
+    }
+  },
   "engine": {
     "require_fresh_cross_bars": 3,
     "_comentario_fresh": "MODELO SNIPER: 3 = quando o sinal TSTS Sniper (cruzamento linha rosa x azul) chega, o RSI ja pode ter cruzado a sua media ATE 3 velas ANTES e ainda vale como entrada imediata. Se o cruzamento do RSI foi ha mais de 3 velas (estado antigo), o motor NAO entra na hora: segura o sinal e so entra quando o RSI cruzar de novo na direcao certa (ou expirar por pending_timeout_bars).",

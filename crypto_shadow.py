@@ -162,6 +162,19 @@ class CryptoShadowController:
         self.sl_percent: float = float(sim.get("sl_percent", 1.0)) / 100.0
         self.poll_minutes: int = int(sim.get("poll_price_minutes", 5))
 
+        # TP/SL calibrado POR TIMEFRAME (fallback = global acima). Guardado em
+        # fração (0.30% -> 0.0030). Ignora chaves de comentário (_...).
+        self.tp_sl_por_tf: Dict[str, Tuple[float, float]] = {}
+        for _tf, _cfg in (config.get("simulacao_por_tf") or {}).items():
+            if _tf.startswith("_") or not isinstance(_cfg, dict):
+                continue
+            try:
+                _tp = float(_cfg["tp_percent"]) / 100.0
+                _sl = float(_cfg["sl_percent"]) / 100.0
+            except (KeyError, TypeError, ValueError):
+                continue
+            self.tp_sl_por_tf[_tf] = (_tp, _sl)
+
         eng = config.get("engine", {})
         # Um motor de decisão por MOEDA+TF (estado de RSI independente).
         self._engines: Dict[str, DecisionEngine] = {}
@@ -303,10 +316,15 @@ class CryptoShadowController:
                     pass
         return self._preco_publico(moeda)
 
-    def _tp_sl(self, action: str, entry: float) -> Tuple[float, float]:
+    def _tp_sl(self, action: str, entry: float,
+               tf: Optional[str] = None) -> Tuple[float, float]:
+        # Usa TP/SL específico do timeframe se configurado; senão o global.
+        tp_pct, sl_pct = self.tp_sl_por_tf.get(
+            tf, (self.tp_percent, self.sl_percent)
+        )
         if action == "buy":
-            return entry * (1 + self.tp_percent), entry * (1 - self.sl_percent)
-        return entry * (1 - self.tp_percent), entry * (1 + self.sl_percent)
+            return entry * (1 + tp_pct), entry * (1 - sl_pct)
+        return entry * (1 - tp_pct), entry * (1 + sl_pct)
 
     def _decisao_analista_regras(self, action: str, cruzamento: int,
                                  rsi: Optional[float], rsi_ma: Optional[float]) -> str:
@@ -336,7 +354,7 @@ class CryptoShadowController:
     def _abrir_simulacao(self, moeda: str, tf: str, action: str, entry: float,
                          cruzamento: int, sinal_tsts: str, rsi: Optional[float]):
         """Abre uma posição simulada e registra ENTRADA para cada alavancagem."""
-        tp, sl = self._tp_sl(action, entry)
+        tp, sl = self._tp_sl(action, entry, tf)
         with self._lock:
             self._positions[f"{moeda}_{tf}"] = SimPosition(
                 moeda, tf, action, entry, tp, sl, cruzamento
