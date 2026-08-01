@@ -276,6 +276,18 @@ def diag():
         "telegram": {"token_presente": tg_token_ok, "token_valido": tg_valid,
                      "chat_id": getattr(notifier, "chat_id", None)},
         "combinacoes_totais": len(controller.moedas) * len(controller.timeframes) * len(controller.alavancagens),
+        "engine": {
+            "analise_ativa": controller._eng_settings.get("analise_ativa"),
+            "require_fresh_cross_bars": controller._eng_settings.get("require_fresh_cross_bars"),
+            "tp_sl_global": {
+                "tp_percent": round(controller.tp_percent * 100, 3),
+                "sl_percent": round(controller.sl_percent * 100, 3),
+            },
+            "tp_sl_por_tf": {
+                tf: {"tp_percent": round(tp * 100, 3), "sl_percent": round(sl * 100, 3)}
+                for tf, (tp, sl) in getattr(controller, "tp_sl_por_tf", {}).items()
+            },
+        },
         "contadores": {
             "sinais_tsts": controller.contador_sinais,
             "rsi_cross": controller.contador_rsi,
