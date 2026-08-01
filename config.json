@@ -73,21 +73,24 @@
     "_comentario_poll": "De quanto em quanto tempo (minutos) o monitor consulta o preco publico da Bitget para verificar se o TP/SL simulado foi atingido nas posicoes simuladas abertas."
   },
   "simulacao_por_tf": {
-    "_comentario": "TP/SL calibrados POR TIMEFRAME a partir das excursoes reais (MFE/DD) de 5 dias. Se um TF nao estiver aqui, o motor usa o tp_percent/sl_percent global de 'simulacao'. Valores em % sobre o preco de entrada.",
+    "_comentario": "TP/SL calibrados POR TIMEFRAME com MARGEM PARA TAXAS (0.12% Bitget). Valores ja consideram custo de entrada+saida. Se um TF nao estiver aqui, o motor usa o tp_percent/sl_percent global de 'simulacao'. Valores em % sobre o preco de entrada.",
     "1m": {
-      "tp_percent": 0.30,
-      "sl_percent": 0.50,
-      "_perfil": "scalping — TP ~p75 do MFE (0.302%), SL entre p75/p90 do DD. Alavancagem sugerida 5x."
+      "tp_percent": 0.50,
+      "sl_percent": 0.60,
+      "_perfil": "scalping — TP ajustado (era 0.30) com margem p/ taxas. TP real apos taxas: 0.38%. WR min breakeven: 65.5%. Alav sugerida 5x.",
+      "_base_calibracao": "MFE p75 0.302% + margem 0.20% para taxas/spread/slippage"
     },
     "5m": {
-      "tp_percent": 0.60,
-      "sl_percent": 1.00,
-      "_perfil": "scalping — TP mediana/p75 do MFE, SL ~p90 do DD (1.016%). Alavancagem sugerida 5x."
+      "tp_percent": 0.80,
+      "sl_percent": 1.10,
+      "_perfil": "scalping — TP ajustado (era 0.60) com margem p/ taxas. TP real apos taxas: 0.68%. WR min breakeven: 64.2%. Alav sugerida 5x.",
+      "_base_calibracao": "MFE mediana 0.44% + margem 0.36% (alvo p75 0.81% viavel)"
     },
     "15m": {
-      "tp_percent": 0.80,
-      "sl_percent": 1.20,
-      "_perfil": "swing — TP mediana/p75 do MFE (0.75-1.09%), SL ~p90 do DD (1.13%). Alavancagem sugerida 10x."
+      "tp_percent": 1.00,
+      "sl_percent": 1.30,
+      "_perfil": "swing — TP ajustado (era 0.80) com margem p/ taxas. TP real apos taxas: 0.88%. WR min breakeven: 61.7%. Alav sugerida 10x.",
+      "_base_calibracao": "MFE mediana 0.754% + margem 0.25% (alvo p75 1.09% viavel)"
     }
   },
   "engine": {
