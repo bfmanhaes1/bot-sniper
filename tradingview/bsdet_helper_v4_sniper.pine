@@ -55,9 +55,10 @@ msg = '{"timeframe":"' + timeframe.period + '","hist":"' + cHist +
 alert(msg, alert.freq_once_per_bar_close)
 
 // --- Painel visual (só para conferência no gráfico) ---
+// OBS.: no Pine v5 as funções precisam ficar no escopo GLOBAL (fora do 'if').
+corCel(_c) => _c == "green" ? color.new(color.green, 0) : color.new(color.red, 0)
 var table painel = table.new(position.top_right, 2, 5, border_width=1)
 if barstate.islast
-    corCel(_c) => _c == "green" ? color.new(color.green, 0) : color.new(color.red, 0)
     table.cell(painel, 0, 0, "Histograma", text_color=color.white)
     table.cell(painel, 1, 0, cHist, bgcolor=corCel(cHist), text_color=color.white)
     table.cell(painel, 0, 1, "Plot 1", text_color=color.white)
