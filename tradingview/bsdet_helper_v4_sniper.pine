@@ -32,20 +32,35 @@ srcP1   = input.source(close, "Plot 1 (source)")
 srcP2   = input.source(close, "Plot 2 (source)")
 srcP3   = input.source(close, "Plot 3 (source)")
 
-// --- Convenção de cor: acima do limiar = VERDE; abaixo = VERMELHO ---
-limiar = input.float(0.0, "Limiar verde/vermelho (padrão 0)",
-     tooltip="Valor >= limiar => verde; abaixo => vermelho. Se a sua convenção for invertida, marque a opção abaixo.")
-inverter = input.bool(false, "Inverter (acima = vermelho)")
+// --- REGRA DE COR de cada componente ---------------------------------
+// IMPORTANTE: o Pine só lê o VALOR (número) do plot, não a cor dele. Por
+// isso você escolhe abaixo QUAL regra converte o número em verde/vermelho.
+// Ajuste cada um olhando o PAINEL no gráfico até bater com o indicador
+// original. Opções:
+//   "Positivo = verde" .... valor >= limiar  -> verde  (bom p/ HISTOGRAMA)
+//   "Negativo = verde" .... valor <  limiar  -> verde  (inverte a de cima)
+//   "Subindo = verde" ..... valor > valor da vela anterior -> verde
+//   "Descendo = verde" .... valor < valor da vela anterior -> verde
+_OPCOES = ["Positivo = verde", "Negativo = verde", "Subindo = verde", "Descendo = verde"]
+limiar   = input.float(0.0, "Limiar (para Positivo/Negativo)")
+modoHist = input.string("Positivo = verde", "Histograma: regra de cor", options=_OPCOES)
+modoP1   = input.string("Subindo = verde",  "Plot 1: regra de cor",     options=_OPCOES)
+modoP2   = input.string("Subindo = verde",  "Plot 2: regra de cor",     options=_OPCOES)
+modoP3   = input.string("Subindo = verde",  "Plot 3: regra de cor",     options=_OPCOES)
 
-corDe(_v) =>
-    _acima = _v >= limiar
-    _resultado = inverter ? not _acima : _acima
-    _resultado ? "green" : "red"
+corPor(_v, _modo) =>
+    _verde = switch _modo
+        "Positivo = verde" => _v >= limiar
+        "Negativo = verde" => _v <  limiar
+        "Subindo = verde"  => _v > _v[1]
+        "Descendo = verde" => _v < _v[1]
+        => _v >= limiar
+    _verde ? "green" : "red"
 
-cHist = corDe(srcHist)
-cP1   = corDe(srcP1)
-cP2   = corDe(srcP2)
-cP3   = corDe(srcP3)
+cHist = corPor(srcHist, modoHist)
+cP1   = corPor(srcP1,   modoP1)
+cP2   = corPor(srcP2,   modoP2)
+cP3   = corPor(srcP3,   modoP3)
 
 // --- Mensagem JSON consolidada (uma por vela) ---
 msg = '{"timeframe":"' + timeframe.period + '","hist":"' + cHist +
