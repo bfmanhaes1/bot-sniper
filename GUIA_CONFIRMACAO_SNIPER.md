@@ -102,17 +102,36 @@ Para o Histograma + Plot 1/2/3 eu preparei um **helper** que junta tudo em
 **um único alerta** (em vez de 4). O arquivo é:
 `tradingview/bsdet_helper_v4_sniper.pine`.
 
+> **IMPORTANTE — por que o helper mudou.** O Pine (linguagem do TradingView)
+> só lê o **valor** (número) de um plot, **nunca a cor**. O BS Detector pinta
+> os plots com 6 cores por uma lógica **interna fechada**, então não dá para
+> "ler a cor" dele. A solução é por **aproximação**: o helper agora **calcula
+> a cor sozinho, a partir do preço**, usando as mesmas contas do indicador
+> aberto **"Trend Meter (by Lij_MC)"** — que muda de cor lateralmente igual
+> aos plots do BS Detector. Você escolhe a conta de cada componente e vai
+> **calibrando** até o painel do helper ficar igual ao BS Detector.
+
 1. No TradingView, abra **Pine Editor** → cole o conteúdo do arquivo →
    **Add to chart**.
-2. Deixe no gráfico **os dois**: o **TSTS BS Detector** e o **BSDET HELPER v4**.
-3. Nos **inputs** do helper, ligue cada "source" na saída certa do BS Detector:
-   - **Histograma (source)** → saída do histograma
-   - **Plot 1 (source)** → Plot 1
-   - **Plot 2 (source)** → Plot 2
-   - **Plot 3 (source)** → Plot 3
-4. Confira o painel no canto do gráfico: ele mostra a cor de cada um.
-   - Se alguma cor estiver **invertida** em relação ao que você vê, marque a
-     opção **"Inverter"** no input (ou ajuste o **Limiar**).
+2. Deixe no gráfico **os dois**: o **TSTS BS Detector** e o **BSDET HELPER v4**
+   (o BS Detector fica só para você **comparar as cores**).
+3. Nos **inputs** do helper, no grupo **"Regra de cor por componente"**,
+   escolha para cada um (Histograma, Plot 1, Plot 2, Plot 3) **qual conta**
+   usar. As opções são as contas do Trend Meter:
+   - **Fast MACD 8/21/5** — histograma do MACD rápido
+   - **MACD 12/26/9** — histograma do MACD clássico
+   - **RSI 13 > 50** / **RSI 5 > 50**
+   - **Mom/Dad Cross** (Top Dog) / **RSI Signal Cross 13/21** / **MA Cross 5/11**
+   - **Trend Candles** (Heikin-Ashi)
+   - (também há **"Fonte: Positivo"** e **"Fonte: Subindo"** como fallback, se
+     você preferir ligar direto num plot pelo campo "Fonte ... opcional")
+4. **Calibre olhando o painel** (canto superior direito) **contra o BS Detector**:
+   - Troque a conta no menu até a cor de cada componente **bater** com o BS
+     Detector na maior parte do tempo.
+   - Se a cor sair **trocada** (verde onde devia ser vermelho), marque
+     **"inverter cor"** daquele componente.
+   - É **aproximação**: não precisa ficar 100% em toda vela — busque o que mais
+     se aproxima do comportamento do original.
 5. Crie **1 alerta**:
    - Condição: **BSDET HELPER v4 — SNIPER** → **"estado (JSON)"** (a mensagem
      já sai pronta; deixe o campo mensagem como `{{strategy.order.alert_message}}`
