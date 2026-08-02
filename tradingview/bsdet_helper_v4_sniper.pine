@@ -1,76 +1,137 @@
 // =====================================================================
-//  BSDET HELPER v4 — Bot SNIPER (camada de CONFIRMAÇÃO consolidada)
+//  BSDET HELPER v4 — Bot SNIPER (camada de CONFIRMAcAO consolidada)
 // =====================================================================
-//  O QUE ELE FAZ
-//  -------------
-//  Lê 4 saídas do indicador fechado "TSTS BS Detector" (Histograma +
-//  Plot1 + Plot2 + Plot3) usando input.source() e, A CADA FECHAMENTO DE
-//  VELA, manda UMA ÚNICA mensagem JSON com a COR ATUAL de cada um para o
-//  Bot SNIPER. O bot guarda essas cores e só ENTRA quando o sinal do
-//  Sniper chegar E todas as cores baterem com a regra.
+//  POR QUE ESTE HELPER MUDOU
+//  -------------------------
+//  O Pine (linguagem do TradingView) so consegue ler o VALOR (numero) de
+//  um plot de outro indicador, NUNCA a COR dele. O "TSTS BS Detector"
+//  pinta os plots com 6 cores por uma logica interna FECHADA (nao e um
+//  simples "subindo/descendo"). Por isso a versao antiga, que tentava
+//  adivinhar a cor pelo valor, nao batia com o original.
 //
-//  Assim você configura APENAS 1 alerta por gráfico (em vez de 4).
+//  SOLUCAO (por APROXIMACAO): este helper agora CALCULA a cor por conta
+//  propria, a partir do PRECO, usando as mesmas contas do indicador
+//  ABERTO "Trend Meter (by Lij_MC)" — que muda de cor lateralmente igual
+//  aos plots do BS Detector. Para cada componente (Histograma, Plot1,
+//  Plot2, Plot3) voce ESCOLHE qual conta usar e vai calibrando ate o
+//  PAINEL deste helper ficar igual ao BS Detector no grafico.
 //
-//  COMO USAR (resumo — o guia completo está no .md que acompanha):
-//   1) Adicione o "TSTS BS Detector" no gráfico.
-//   2) Adicione ESTE indicador (BSDET HELPER v4) no MESMO gráfico.
-//   3) Nos inputs abaixo, ligue cada "source" na saída correspondente do
-//      BS Detector (Histograma, Plot1, Plot2, Plot3).
-//   4) Ajuste o "limiar" se a sua convenção de cor não for > 0 = verde.
-//   5) Crie 1 alerta: condição = "BSDET v4: estado (JSON)",
+//  IMPORTANTE: e uma APROXIMACAO. Nao sabemos as regras exatas do BS
+//  Detector, entao voce ajusta o menu de cada componente (e o "inverter")
+//  ate as cores baterem. Depois disso o alerta ja manda tudo certo.
+//
+//  COMO USAR (resumo — guia completo no .md que acompanha):
+//   1) Adicione o "TSTS BS Detector" no grafico (para comparar as cores).
+//   2) Adicione ESTE indicador (BSDET HELPER v4) no MESMO grafico.
+//   3) Em cada componente, escolha no menu qual conta do Trend Meter usar
+//      e marque "inverter" se a cor sair trocada. Compare o PAINEL (canto
+//      superior direito) com as cores do BS Detector ate baterem.
+//   4) Crie 1 alerta: condicao = "BSDET v4: estado (JSON)",
 //      "Once Per Bar Close", webhook para:
 //         https://web-production-77454.up.railway.app/bsdet/estado/<MOEDA>/<TF>
-//      (ex.: .../bsdet/estado/BTC/5m). A mensagem já sai pronta.
+//      (ex.: .../bsdet/estado/BTC/5m). A mensagem ja sai pronta.
 // =====================================================================
 
 //@version=5
 indicator("BSDET HELPER v4 — SNIPER", overlay=false)
 
-// --- Fontes (ligue cada uma na saída certa do TSTS BS Detector) ---
-srcHist = input.source(close, "Histograma (source)")
-srcP1   = input.source(close, "Plot 1 (source)")
-srcP2   = input.source(close, "Plot 2 (source)")
-srcP3   = input.source(close, "Plot 3 (source)")
+// =====================================================================
+//  CONTAS DO TREND METER (by Lij_MC) — todas devolvem VERDE(true)/VERMELHO(false)
+// =====================================================================
+// 1) Fast MACD 8/21/5  -> histograma do MACD rapido > 0
+fastMacdLine = ta.ema(close, 8) - ta.ema(close, 21)
+fastSignal   = ta.ema(fastMacdLine, 5)
+fastHist     = fastMacdLine - fastSignal
+tmFastMacd   = fastHist > 0
 
-// --- REGRA DE COR de cada componente ---------------------------------
-// IMPORTANTE: o Pine só lê o VALOR (número) do plot, não a cor dele. Por
-// isso você escolhe abaixo QUAL regra converte o número em verde/vermelho.
-// Ajuste cada um olhando o PAINEL no gráfico até bater com o indicador
-// original. Opções:
-//   "Positivo = verde" .... valor >= limiar  -> verde  (bom p/ HISTOGRAMA)
-//   "Negativo = verde" .... valor <  limiar  -> verde  (inverte a de cima)
-//   "Subindo = verde" ..... valor > valor da vela anterior -> verde
-//   "Descendo = verde" .... valor < valor da vela anterior -> verde
-_OPCOES = ["Positivo = verde", "Negativo = verde", "Subindo = verde", "Descendo = verde"]
-limiar   = input.float(0.0, "Limiar (para Positivo/Negativo)")
-modoHist = input.string("Positivo = verde", "Histograma: regra de cor", options=_OPCOES)
-modoP1   = input.string("Subindo = verde",  "Plot 1: regra de cor",     options=_OPCOES)
-modoP2   = input.string("Subindo = verde",  "Plot 2: regra de cor",     options=_OPCOES)
-modoP3   = input.string("Subindo = verde",  "Plot 3: regra de cor",     options=_OPCOES)
+// 2) MACD 12/26/9  -> histograma do MACD classico > 0
+macdLine   = ta.ema(close, 12) - ta.ema(close, 26)
+macdSignal = ta.ema(macdLine, 9)
+macdHist   = macdLine - macdSignal
+tmMacd     = macdHist > 0
 
-corPor(_v, _modo) =>
+// 3) RSI 13 > 50
+tmRsi13 = ta.rsi(close, 13) > 50
+
+// 4) RSI 5 > 50
+tmRsi5 = ta.rsi(close, 5) > 50
+
+// 5) Mom/Dad Cross (Top Dog Trading)
+tdMom  = ta.ema(close, 5) - ta.ema(close, 20)
+tdDad  = ta.ema(tdMom, 30)
+tmMomDad = tdMom > tdDad
+
+// 6) RSI Signal Line Cross (RSI 13 x linreg 21)
+r13   = ta.rsi(close, 13)
+r13lr = ta.linreg(r13, 21, 0)
+tmRsiSig = r13 > r13lr
+
+// 7) MA Cross (EMA 5 x EMA 11)
+tmMaCross = ta.ema(close, 5) > ta.ema(close, 11)
+
+// 8) Trend Candles (Heikin-Ashi: vela de alta = verde)
+haClose = (open + high + low + close) / 4
+var float haOpen = na
+haOpen := na(haOpen[1]) ? (open + close) / 2 : (haOpen[1] + haClose[1]) / 2
+tmTrendCandles = haClose >= haOpen
+
+// =====================================================================
+//  FONTES OPCIONAIS (fallback) — so use se preferir ler um plot direto
+// =====================================================================
+srcHist = input.source(close, "Fonte Histograma (opcional/fallback)", group="Fontes opcionais")
+srcP1   = input.source(close, "Fonte Plot 1 (opcional/fallback)",    group="Fontes opcionais")
+srcP2   = input.source(close, "Fonte Plot 2 (opcional/fallback)",    group="Fontes opcionais")
+srcP3   = input.source(close, "Fonte Plot 3 (opcional/fallback)",    group="Fontes opcionais")
+limiar  = input.float(0.0, "Limiar da fonte (Positivo/Negativo)",     group="Fontes opcionais")
+
+// =====================================================================
+//  MENU: qual conta cada componente usa
+// =====================================================================
+_OPCOES = ["Fast MACD 8/21/5", "MACD 12/26/9", "RSI 13 > 50", "RSI 5 > 50", "Mom/Dad Cross", "RSI Signal Cross 13/21", "MA Cross 5/11", "Trend Candles", "Fonte: Positivo", "Fonte: Subindo"]
+
+modoHist = input.string("Fast MACD 8/21/5", "Histograma: qual conta", options=_OPCOES, group="Regra de cor por componente")
+invHist  = input.bool(false, "Histograma: inverter cor", group="Regra de cor por componente")
+modoP1   = input.string("RSI 13 > 50", "Plot 1: qual conta", options=_OPCOES, group="Regra de cor por componente")
+invP1    = input.bool(false, "Plot 1: inverter cor", group="Regra de cor por componente")
+modoP2   = input.string("RSI 5 > 50", "Plot 2: qual conta", options=_OPCOES, group="Regra de cor por componente")
+invP2    = input.bool(false, "Plot 2: inverter cor", group="Regra de cor por componente")
+modoP3   = input.string("MA Cross 5/11", "Plot 3: qual conta", options=_OPCOES, group="Regra de cor por componente")
+invP3    = input.bool(false, "Plot 3: inverter cor", group="Regra de cor por componente")
+
+// =====================================================================
+//  Seletor: transforma a escolha do menu em VERDE(true)/VERMELHO(false)
+// =====================================================================
+escolher(_modo, _src, _inv) =>
     _verde = switch _modo
-        "Positivo = verde" => _v >= limiar
-        "Negativo = verde" => _v <  limiar
-        "Subindo = verde"  => _v > _v[1]
-        "Descendo = verde" => _v < _v[1]
-        => _v >= limiar
-    _verde ? "green" : "red"
+        "Fast MACD 8/21/5"        => tmFastMacd
+        "MACD 12/26/9"            => tmMacd
+        "RSI 13 > 50"             => tmRsi13
+        "RSI 5 > 50"              => tmRsi5
+        "Mom/Dad Cross"           => tmMomDad
+        "RSI Signal Cross 13/21"  => tmRsiSig
+        "MA Cross 5/11"           => tmMaCross
+        "Trend Candles"           => tmTrendCandles
+        "Fonte: Positivo"         => _src >= limiar
+        "Fonte: Subindo"          => _src > _src[1]
+        => tmFastMacd
+    _final = _inv ? not _verde : _verde
+    _final ? "green" : "red"
 
-cHist = corPor(srcHist, modoHist)
-cP1   = corPor(srcP1,   modoP1)
-cP2   = corPor(srcP2,   modoP2)
-cP3   = corPor(srcP3,   modoP3)
+cHist = escolher(modoHist, srcHist, invHist)
+cP1   = escolher(modoP1,   srcP1,   invP1)
+cP2   = escolher(modoP2,   srcP2,   invP2)
+cP3   = escolher(modoP3,   srcP3,   invP3)
 
-// --- Mensagem JSON consolidada (uma por vela) ---
+// =====================================================================
+//  Mensagem JSON consolidada (uma por fechamento de vela)
+// =====================================================================
 msg = '{"timeframe":"' + timeframe.period + '","hist":"' + cHist +
       '","p1":"' + cP1 + '","p2":"' + cP2 + '","p3":"' + cP3 + '"}'
-
-// Dispara UMA vez por fechamento de vela.
 alert(msg, alert.freq_once_per_bar_close)
 
-// --- Painel visual (só para conferência no gráfico) ---
-// OBS.: no Pine v5 as funções precisam ficar no escopo GLOBAL (fora do 'if').
+// =====================================================================
+//  Painel visual (para comparar com o BS Detector no grafico)
+// =====================================================================
 corCel(_c) => _c == "green" ? color.new(color.green, 0) : color.new(color.red, 0)
 var table painel = table.new(position.top_right, 2, 5, border_width=1)
 if barstate.islast
