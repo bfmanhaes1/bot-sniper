@@ -38,9 +38,9 @@ limiar = input.float(0.0, "Limiar verde/vermelho (padrão 0)",
 inverter = input.bool(false, "Inverter (acima = vermelho)")
 
 corDe(_v) =>
-    verde = _v >= limiar
-    verde := inverter ? not verde : verde
-    verde ? "green" : "red"
+    _acima = _v >= limiar
+    _resultado = inverter ? not _acima : _acima
+    _resultado ? "green" : "red"
 
 cHist = corDe(srcHist)
 cP1   = corDe(srcP1)
