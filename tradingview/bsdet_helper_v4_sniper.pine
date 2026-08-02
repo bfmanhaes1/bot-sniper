@@ -87,15 +87,24 @@ limiar  = input.float(0.0, "Limiar da fonte (Positivo/Negativo)",     group="Fon
 // =====================================================================
 //  MENU: qual conta cada componente usa
 // =====================================================================
-_OPCOES = ["Fast MACD 8/21/5", "MACD 12/26/9", "RSI 13 > 50", "RSI 5 > 50", "Mom/Dad Cross", "RSI Signal Cross 13/21", "MA Cross 5/11", "Trend Candles", "Fonte: Positivo", "Fonte: Subindo"]
-
-modoHist = input.string("Fast MACD 8/21/5", "Histograma: qual conta", options=_OPCOES, group="Regra de cor por componente")
+modoHist = input.string("Fast MACD 8/21/5", "Histograma: qual conta", 
+  options=["Fast MACD 8/21/5", "MACD 12/26/9", "RSI 13 > 50", "RSI 5 > 50", "Mom/Dad Cross", "RSI Signal Cross 13/21", "MA Cross 5/11", "Trend Candles", "Fonte: Positivo", "Fonte: Subindo"], 
+  group="Regra de cor por componente")
 invHist  = input.bool(false, "Histograma: inverter cor", group="Regra de cor por componente")
-modoP1   = input.string("RSI 13 > 50", "Plot 1: qual conta", options=_OPCOES, group="Regra de cor por componente")
+
+modoP1   = input.string("RSI 13 > 50", "Plot 1: qual conta", 
+  options=["Fast MACD 8/21/5", "MACD 12/26/9", "RSI 13 > 50", "RSI 5 > 50", "Mom/Dad Cross", "RSI Signal Cross 13/21", "MA Cross 5/11", "Trend Candles", "Fonte: Positivo", "Fonte: Subindo"], 
+  group="Regra de cor por componente")
 invP1    = input.bool(false, "Plot 1: inverter cor", group="Regra de cor por componente")
-modoP2   = input.string("RSI 5 > 50", "Plot 2: qual conta", options=_OPCOES, group="Regra de cor por componente")
+
+modoP2   = input.string("RSI 5 > 50", "Plot 2: qual conta", 
+  options=["Fast MACD 8/21/5", "MACD 12/26/9", "RSI 13 > 50", "RSI 5 > 50", "Mom/Dad Cross", "RSI Signal Cross 13/21", "MA Cross 5/11", "Trend Candles", "Fonte: Positivo", "Fonte: Subindo"], 
+  group="Regra de cor por componente")
 invP2    = input.bool(false, "Plot 2: inverter cor", group="Regra de cor por componente")
-modoP3   = input.string("MA Cross 5/11", "Plot 3: qual conta", options=_OPCOES, group="Regra de cor por componente")
+
+modoP3   = input.string("MA Cross 5/11", "Plot 3: qual conta", 
+  options=["Fast MACD 8/21/5", "MACD 12/26/9", "RSI 13 > 50", "RSI 5 > 50", "Mom/Dad Cross", "RSI Signal Cross 13/21", "MA Cross 5/11", "Trend Candles", "Fonte: Positivo", "Fonte: Subindo"], 
+  group="Regra de cor por componente")
 invP3    = input.bool(false, "Plot 3: inverter cor", group="Regra de cor por componente")
 
 // =====================================================================
