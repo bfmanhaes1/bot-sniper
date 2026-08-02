@@ -293,6 +293,7 @@ def diag():
             "rsi_cross": controller.contador_rsi,
             "entradas_simuladas": controller.contador_entradas_sim,
         },
+        "confirmacao": controller.confirm.snapshot() if getattr(controller, "confirm", None) else None,
         "dias_com_registro": crypto_logger.dias_disponiveis()[:10],
         "total_webhooks_recebidos": len(_recent_events),
         "ultimos_eventos": eventos,
@@ -407,6 +408,88 @@ def rsi_cross(moeda: str):
     })
     logger.info("Webhook RSI %s: %s", moeda.upper(), json.dumps(data, ensure_ascii=False))
     res = controller.processar_rsi_cross(moeda, data)
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+# --------------------------------------------------------------------- #
+# CAMADA DE CONFIRMAÇÃO (gate) — cores dos indicadores fechados
+# --------------------------------------------------------------------- #
+# Estas rotas recebem a COR ATUAL de cada componente (não geram entrada
+# sozinhas). O bot guarda a cor por MOEDA+TF e, quando o sinal do Sniper
+# chega, só ENTRA se todas as cores baterem com a regra (config "confirmacao").
+_COMPONENTES_BSDET = {
+    "hist": "histograma", "histograma": "histograma", "histogram": "histograma",
+    "plot1": "plot1", "p1": "plot1",
+    "plot2": "plot2", "p2": "plot2",
+    "plot3": "plot3", "p3": "plot3",
+}
+
+
+def _prep_confirm_payload(tf: str = None):
+    """Lê o payload do webhook e injeta o timeframe do path (se veio na URL)."""
+    if not ACEITAR_WEBHOOKS:
+        return None, jsonify({"ok": True, "decisao": "ignorado",
+                              "motivo": "MODO AUTÔNOMO: webhooks desativados "
+                                        "(aceitar_webhooks=false)."}), 200
+    data = _parse_payload()
+    if data is None:
+        data = {}
+    if tf:  # timeframe veio na URL -> tem prioridade
+        data["timeframe"] = tf
+    return data, None, None
+
+
+@app.route("/verde/bokk/<moeda>", methods=["POST"])
+@app.route("/verde/bokk/<moeda>/<tf>", methods=["POST"])
+def confirm_bokk(moeda: str, tf: str = None):
+    """Cor atual do BOKK (TSTS Core). Alerta nativo do indicador fechado.
+    Mensagem esperada: {"signal":"green"} ou {"signal":"red"}."""
+    data, resp, code = _prep_confirm_payload(tf)
+    if resp is not None:
+        return resp, code
+    res = controller.atualizar_confirmacao("bokk", moeda, data)
+    _record_event(moeda.upper(), "confirm_bokk", {
+        "tf": str(data.get("timeframe") or ""), "ok": res.get("ok"),
+        "cor": res.get("cor"), "erro": res.get("error"),
+    })
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@app.route("/bsdet/estado/<moeda>", methods=["POST"])
+@app.route("/bsdet/estado/<moeda>/<tf>", methods=["POST"])
+def confirm_bsdet_estado(moeda: str, tf: str = None):
+    """Estado CONSOLIDADO do BS Detector (helper v4): histograma + plot1/2/3
+    numa única mensagem JSON. Ex.: {"timeframe":"5m","hist":"red",
+    "p1":"green","p2":"green","p3":"green"}."""
+    data, resp, code = _prep_confirm_payload(tf)
+    if resp is not None:
+        return resp, code
+    res = controller.atualizar_confirmacao_varios(moeda, data)
+    _record_event(moeda.upper(), "confirm_bsdet_estado", {
+        "tf": str(data.get("timeframe") or ""), "ok": res.get("ok"),
+        "aplicados": res.get("aplicados"), "erro": res.get("error"),
+    })
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@app.route("/bsdet/<comp>/<moeda>", methods=["POST"])
+@app.route("/bsdet/<comp>/<moeda>/<tf>", methods=["POST"])
+def confirm_bsdet_componente(comp: str, moeda: str, tf: str = None):
+    """Cor de UM componente do BS Detector (compatibilidade com o helper v3
+    que dispara alertas separados). comp = hist/plot1/plot2/plot3."""
+    componente = _COMPONENTES_BSDET.get(str(comp).strip().lower())
+    if not componente:
+        return jsonify({"ok": False,
+                        "error": f"componente '{comp}' desconhecido "
+                                 "(use hist/plot1/plot2/plot3)"}), 400
+    data, resp, code = _prep_confirm_payload(tf)
+    if resp is not None:
+        return resp, code
+    res = controller.atualizar_confirmacao(componente, moeda, data)
+    _record_event(moeda.upper(), f"confirm_{componente}", {
+        "tf": str(data.get("timeframe") or ""), "ok": res.get("ok"),
+        "cor": res.get("cor"), "erro": res.get("error"),
+    })
     return jsonify(res), (200 if res.get("ok") else 400)
 
 

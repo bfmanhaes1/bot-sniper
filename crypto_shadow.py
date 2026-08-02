@@ -32,6 +32,7 @@ import requests
 
 import crypto_logger
 from engine import DecisionEngine
+from confirmacao import ConfirmStore
 
 logger = logging.getLogger("crypto_shadow")
 
@@ -203,6 +204,45 @@ class CryptoShadowController:
         # um eventual webhook do TradingView disparem quase juntos.
         self._dedup_seg: float = float(config.get("dedup_sinal_segundos", 90))
         self._ultimo_sinal: Dict[str, float] = {}  # "MOEDA_TF_ACAO" -> epoch
+
+        # Camada de CONFIRMAÇÃO (gate) por moeda+TF — modelo do "bot verde" MNQ.
+        # Guarda a cor atual de BOKK / histograma / plot1/2/3 e só libera a
+        # entrada quando todas baterem com a regra (config "confirmacao").
+        self.confirm = ConfirmStore(config)
+
+    # ------------------------------------------------------------------ #
+    def atualizar_confirmacao(self, componente: str, moeda: str,
+                              data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recebe a COR ATUAL de UM componente (bokk/histograma/plot1/2/3) vinda de
+        um webhook do TradingView e guarda no ConfirmStore.
+        `data` pode trazer: signal/cor/color/value (a cor) e timeframe/tf/interval.
+        """
+        moeda = (moeda or "").upper()
+        tf = _norm_tf(data.get("timeframe") or data.get("tf") or data.get("interval"))
+        erro = self._validar(moeda, tf)
+        if erro:
+            return {"ok": False, "error": erro}
+        cor = (data.get("signal") or data.get("cor") or data.get("color")
+               or data.get("value") or data.get("estado"))
+        return self.confirm.atualizar(componente, moeda, tf, cor)
+
+    def atualizar_confirmacao_varios(self, moeda: str,
+                                     data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recebe VÁRIAS cores de uma vez (helper consolidado do BS Detector:
+        hist + plot1/2/3 numa única mensagem) e guarda todas.
+        `data` traz timeframe/tf/interval + as cores (hist/p1/p2/p3/...).
+        """
+        moeda = (moeda or "").upper()
+        tf = _norm_tf(data.get("timeframe") or data.get("tf") or data.get("interval"))
+        erro = self._validar(moeda, tf)
+        if erro:
+            return {"ok": False, "error": erro}
+        # Tudo que não for metadado de timeframe é candidato a cor de componente.
+        cores = {k: v for k, v in (data or {}).items()
+                 if str(k).lower() not in ("timeframe", "tf", "interval", "moeda", "symbol", "ticker")}
+        return self.confirm.atualizar_varios(moeda, tf, cores)
 
     # ------------------------------------------------------------------ #
     def _engine(self, moeda: str, tf: str) -> DecisionEngine:
@@ -525,6 +565,31 @@ class CryptoShadowController:
                            direction: str = "") -> Dict[str, Any]:
         cruzamento = decisao.get("cruzamento")
 
+        # 0) GATE DE CONFIRMAÇÃO — modelo "bot verde" MNQ.
+        # O motor já disse "entrar" (Sniper + RSI ok) e JÁ registrou a trava de
+        # posição. Antes de simular a entrada, exigimos que as cores dos
+        # indicadores fechados (BOKK / histograma / plot1/2/3) batam com a regra.
+        # Se NÃO baterem: registra BLOQUEADO, SOLTA a trava (senão o motor acha
+        # que abriu posição e trava a combinação) e NÃO entra.
+        if decisao.get("entrar") and getattr(self, "confirm", None) and self.confirm.ativa:
+            ok_conf, det_conf = self.confirm.checar(
+                moeda, tf, (action or "").lower(), _tf_seg(tf) / 60.0)
+            if not ok_conf:
+                self._engine(moeda, tf).liberar_posicao(moeda)
+                crypto_logger.registrar("BLOQUEADO", {
+                    "moeda": moeda, "timeframe": tf, "alavancagem": None,
+                    "sinal_tsts": sinal_txt, "rsi_valor": rsi,
+                    "cruzamento_numero": cruzamento or 1,
+                    "decisao_agente": "bloqueado_confirmacao",
+                    "direcao": (action or "").lower(),
+                    "motivo": det_conf.get("motivo"),
+                    "confirmacao": det_conf,
+                })
+                logger.info("%s %s: entrada BLOQUEADA pela confirmação — %s",
+                            moeda, tf, det_conf.get("motivo"))
+                return {"ok": True, "decisao": "bloqueado_confirmacao",
+                        "cruzamento": cruzamento or 1, "detalhe": det_conf}
+
         # 1) ENTRADA (automática no lado alinhado ou no cruzamento máximo)
         if decisao.get("entrar"):
             n = cruzamento or 1
@@ -554,6 +619,23 @@ class CryptoShadowController:
             # deixamos o motor seguir até o cruzamento máximo (entrada automática),
             # a menos que a hipótese seja 'entrar' — aí simulamos a entrada também.
             if hipotese == "entrar" and entry and entry > 0:
+                # Também passa pelo gate de confirmação (mesmo no modo análise).
+                if getattr(self, "confirm", None) and self.confirm.ativa:
+                    ok_conf, det_conf = self.confirm.checar(
+                        moeda, tf, (action or "").lower(), _tf_seg(tf) / 60.0)
+                    if not ok_conf:
+                        crypto_logger.registrar("BLOQUEADO", {
+                            "moeda": moeda, "timeframe": tf, "alavancagem": None,
+                            "sinal_tsts": sinal_txt, "rsi_valor": rsi,
+                            "cruzamento_numero": n,
+                            "decisao_agente": "bloqueado_confirmacao",
+                            "direcao": (action or "").lower(),
+                            "motivo": det_conf.get("motivo"),
+                            "confirmacao": det_conf,
+                        })
+                        return {"ok": True, "decisao": "bloqueado_confirmacao",
+                                "analise": True, "cruzamento": n,
+                                "detalhe": det_conf}
                 self._abrir_simulacao(moeda, tf, action, entry, n, sinal_txt, rsi)
                 self._engine(moeda, tf).confirmar_entrada(moeda)
             return {"ok": True, "decisao": hipotese, "analise": True,
@@ -734,6 +816,7 @@ class CryptoShadowController:
             "contador_sinais": self.contador_sinais,
             "contador_rsi": self.contador_rsi,
             "contador_entradas_sim": self.contador_entradas_sim,
+            "confirmacao": self.confirm.snapshot() if getattr(self, "confirm", None) else None,
         }
 
 

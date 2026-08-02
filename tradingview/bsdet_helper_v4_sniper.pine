@@ -1,0 +1,70 @@
+// =====================================================================
+//  BSDET HELPER v4 — Bot SNIPER (camada de CONFIRMAÇÃO consolidada)
+// =====================================================================
+//  O QUE ELE FAZ
+//  -------------
+//  Lê 4 saídas do indicador fechado "TSTS BS Detector" (Histograma +
+//  Plot1 + Plot2 + Plot3) usando input.source() e, A CADA FECHAMENTO DE
+//  VELA, manda UMA ÚNICA mensagem JSON com a COR ATUAL de cada um para o
+//  Bot SNIPER. O bot guarda essas cores e só ENTRA quando o sinal do
+//  Sniper chegar E todas as cores baterem com a regra.
+//
+//  Assim você configura APENAS 1 alerta por gráfico (em vez de 4).
+//
+//  COMO USAR (resumo — o guia completo está no .md que acompanha):
+//   1) Adicione o "TSTS BS Detector" no gráfico.
+//   2) Adicione ESTE indicador (BSDET HELPER v4) no MESMO gráfico.
+//   3) Nos inputs abaixo, ligue cada "source" na saída correspondente do
+//      BS Detector (Histograma, Plot1, Plot2, Plot3).
+//   4) Ajuste o "limiar" se a sua convenção de cor não for > 0 = verde.
+//   5) Crie 1 alerta: condição = "BSDET v4: estado (JSON)",
+//      "Once Per Bar Close", webhook para:
+//         https://web-production-77454.up.railway.app/bsdet/estado/<MOEDA>/<TF>
+//      (ex.: .../bsdet/estado/BTC/5m). A mensagem já sai pronta.
+// =====================================================================
+
+//@version=5
+indicator("BSDET HELPER v4 — SNIPER", overlay=false)
+
+// --- Fontes (ligue cada uma na saída certa do TSTS BS Detector) ---
+srcHist = input.source(close, "Histograma (source)")
+srcP1   = input.source(close, "Plot 1 (source)")
+srcP2   = input.source(close, "Plot 2 (source)")
+srcP3   = input.source(close, "Plot 3 (source)")
+
+// --- Convenção de cor: acima do limiar = VERDE; abaixo = VERMELHO ---
+limiar = input.float(0.0, "Limiar verde/vermelho (padrão 0)",
+     tooltip="Valor >= limiar => verde; abaixo => vermelho. Se a sua convenção for invertida, marque a opção abaixo.")
+inverter = input.bool(false, "Inverter (acima = vermelho)")
+
+corDe(_v) =>
+    verde = _v >= limiar
+    verde := inverter ? not verde : verde
+    verde ? "green" : "red"
+
+cHist = corDe(srcHist)
+cP1   = corDe(srcP1)
+cP2   = corDe(srcP2)
+cP3   = corDe(srcP3)
+
+// --- Mensagem JSON consolidada (uma por vela) ---
+msg = '{"timeframe":"' + timeframe.period + '","hist":"' + cHist +
+      '","p1":"' + cP1 + '","p2":"' + cP2 + '","p3":"' + cP3 + '"}'
+
+// Dispara UMA vez por fechamento de vela.
+alert(msg, alert.freq_once_per_bar_close)
+
+// --- Painel visual (só para conferência no gráfico) ---
+var table painel = table.new(position.top_right, 2, 5, border_width=1)
+if barstate.islast
+    corCel(_c) => _c == "green" ? color.new(color.green, 0) : color.new(color.red, 0)
+    table.cell(painel, 0, 0, "Histograma", text_color=color.white)
+    table.cell(painel, 1, 0, cHist, bgcolor=corCel(cHist), text_color=color.white)
+    table.cell(painel, 0, 1, "Plot 1", text_color=color.white)
+    table.cell(painel, 1, 1, cP1, bgcolor=corCel(cP1), text_color=color.white)
+    table.cell(painel, 0, 2, "Plot 2", text_color=color.white)
+    table.cell(painel, 1, 2, cP2, bgcolor=corCel(cP2), text_color=color.white)
+    table.cell(painel, 0, 3, "Plot 3", text_color=color.white)
+    table.cell(painel, 1, 3, cP3, bgcolor=corCel(cP3), text_color=color.white)
+    table.cell(painel, 0, 4, "TF", text_color=color.white)
+    table.cell(painel, 1, 4, timeframe.period, text_color=color.white)

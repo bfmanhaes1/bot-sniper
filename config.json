@@ -93,6 +93,21 @@
       "_base_calibracao": "MFE mediana 0.754% + margem 0.25% (alvo p75 1.09% viavel)"
     }
   },
+  "confirmacao": {
+    "_comentario": "CAMADA DE CONFIRMACAO (gate) por MOEDA+TIMEFRAME — modelo do 'bot verde' do MNQ. Quando o sinal do Sniper (rosa x azul) chega e ja passou pelo RSI, o bot SO entra se as cores dos indicadores fechados baterem com a regra. Caso contrario NAO entra (registra BLOQUEADO em modo sombra). As cores chegam por webhook: BOKK (TSTS Core) e histograma+plot1/2/3 (TSTS BS Detector via helper).",
+    "ativa": true,
+    "_comentario_ativa": "true = gate LIGADO (soma-se ao Sniper+RSI). ATENCAO: enquanto os alertas de BOKK e BS Detector nao estiverem configurados no TradingView para uma combinacao, aquela combinacao NAO entra (fail-closed). Coloque false para voltar ao comportamento antigo (so Sniper+RSI) durante a montagem dos alertas.",
+    "bokk_tolerancia_velas": 3,
+    "_comentario_bokk_tol": "Aceita a mudanca de cor do BOKK ate N velas ANTES do sinal e ainda valida (frescor). 0 = ignora o frescor (basta a cor atual estar certa).",
+    "exigir": {
+      "bokk": "mesma",
+      "histograma": "oposta",
+      "plot1": "mesma",
+      "plot2": "mesma",
+      "plot3": "mesma"
+    },
+    "_comentario_exigir": "Para cada componente: 'mesma' = cor igual a direcao do trade (COMPRA=verde / VENDA=vermelho); 'oposta' = cor invertida. Regra do usuario -> COMPRA: BOKK verde, histograma VERMELHO, plot1/2/3 verdes. VENDA e o espelho. Se a convencao do seu histograma for diferente, troque 'oposta' por 'mesma' aqui."
+  },
   "engine": {
     "require_fresh_cross_bars": 3,
     "_comentario_fresh": "MODELO SNIPER: 3 = quando o sinal TSTS Sniper (cruzamento linha rosa x azul) chega, o RSI ja pode ter cruzado a sua media ATE 3 velas ANTES e ainda vale como entrada imediata. Se o cruzamento do RSI foi ha mais de 3 velas (estado antigo), o motor NAO entra na hora: segura o sinal e so entra quando o RSI cruzar de novo na direcao certa (ou expirar por pending_timeout_bars).",
