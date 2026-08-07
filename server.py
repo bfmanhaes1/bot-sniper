@@ -295,6 +295,13 @@ def diag():
         },
         "confirmacao": controller.confirm.snapshot() if getattr(controller, "confirm", None) else None,
         "catalyst": controller.catalyst.snapshot() if getattr(controller, "catalyst", None) else None,
+        "estudo_tpsl": {
+            "ativa": getattr(controller, "estudo_ativa", None),
+            "janela_min_por_tf": getattr(controller, "estudo_janela_min", {}),
+            "data_dir": crypto_logger.DATA_DIR,
+            "arquivo_livro_razao": crypto_logger.ESTUDO_PATH,
+            "resumo": crypto_logger.resumo_estudo(),
+        },
         "dias_com_registro": crypto_logger.dias_disponiveis()[:10],
         "total_webhooks_recebidos": len(_recent_events),
         "ultimos_eventos": eventos,
@@ -314,6 +321,40 @@ def registro():
     dia = request.args.get("dia")  # AAAA-MM-DD (opcional; padrão = hoje UTC)
     return jsonify({"dia": dia or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                     "registros": crypto_logger.ler_dia(dia)})
+
+
+@app.route("/estudo", methods=["GET"])
+def estudo():
+    """
+    Livro-razão do ESTUDO de TP/SL (durável). MFE = o quanto correu a favor;
+    DD/MAE = o quanto correu contra. Base para calibrar TP e SL.
+
+    Query params (todos opcionais):
+      - moeda: filtra por moeda (ex.: BTC)
+      - tf:    filtra por timeframe (ex.: 5m)
+      - detalhe: "sim" para incluir as linhas cruas (padrão traz só o resumo)
+      - limite: nº de linhas cruas mais recentes a retornar (com detalhe=sim)
+    """
+    moeda = request.args.get("moeda")
+    tf = request.args.get("tf")
+    detalhe = request.args.get("detalhe", "").lower() == "sim"
+    try:
+        limite = int(request.args.get("limite", "200"))
+    except (TypeError, ValueError):
+        limite = 200
+    resp = {
+        "arquivo": crypto_logger.ESTUDO_PATH,
+        "data_dir": crypto_logger.DATA_DIR,
+        "resumo": crypto_logger.resumo_estudo(moeda, tf),
+    }
+    if detalhe:
+        linhas = crypto_logger.ler_estudo(limite)
+        if moeda:
+            linhas = [r for r in linhas if (r.get("moeda") or "").upper() == moeda.upper()]
+        if tf:
+            linhas = [r for r in linhas if r.get("tf") == tf]
+        resp["linhas"] = linhas
+    return jsonify(resp)
 
 
 @app.route("/limpar_logs", methods=["POST"])

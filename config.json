@@ -93,6 +93,19 @@
       "_base_calibracao": "MFE mediana 0.754% + margem 0.25% (alvo p75 1.09% viavel)"
     }
   },
+  "estudo_tpsl": {
+    "_comentario": "ESTUDO FORCADO de TP/SL. Para calibrar TP e SL SEM vies, o bot OBSERVA cada entrada simulada por uma JANELA FIXA completa e NAO para no TP/SL: mede o quanto o preco REALMENTE andou a favor (MFE) e contra (DD/MAE) e grava 1 linha por entrada num livro-razao DURAVEL (estudo_tpsl.jsonl). Com esses numeros voce escolhe o TP perto do MFE tipico e o SL um pouco alem do DD tipico. Se ativa=false, volta ao comportamento antigo (fecha no toque do TP/SL).",
+    "ativa": true,
+    "janela_min_por_tf": {
+      "1m": 30,
+      "5m": 120,
+      "15m": 360,
+      "_comentario": "Quantos MINUTOS observar cada entrada antes de gravar o MFE/DD e encerrar o estudo. Deve cobrir o tempo tipico de um trade naquele timeframe (1m -> 30min, 5m -> 2h, 15m -> 6h)."
+    },
+    "janela_min_default": 240,
+    "_comentario_default": "Janela usada para um timeframe que nao esteja listado acima."
+  },
+  "_comentario_data_dir": "Os logs e o livro-razao do estudo vao para a env CRYPTO_DATA_DIR (se definida) ou para /data (se existir um Volume montado) ou, por fim, para a pasta do projeto. No Railway crie um VOLUME com mount path /data para os numeros de MFE/DD SOBREVIVEREM aos redeploys (o disco padrao e efemero).",
   "confirmacao": {
     "_comentario": "DESLIGADO. Este era o gate de CORES (BOKK + BS Detector histograma/plot1/2/3). Foi substituido pelo CATALISADOR (bloco 'catalyst' abaixo). Nao apagamos o codigo (confirmacao.py continua no repo), so deixamos ativa=false. Se um dia quiser voltar ao gate de cores, coloque ativa=true.",
     "ativa": false,

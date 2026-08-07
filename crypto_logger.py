@@ -31,8 +31,31 @@ from typing import Dict, Any, List, Optional
 logger = logging.getLogger("crypto_logger")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.join(BASE_DIR, "crypto2_logs")
+
+# ---------------------------------------------------------------------------
+# DIRETÓRIO DE DADOS DURÁVEL
+# ---------------------------------------------------------------------------
+# O disco padrão do Railway é EFÊMERO: some a cada redeploy/reinício. Para não
+# perder o histórico do estudo de TP/SL, os dados vão para um VOLUME persistente
+# montado em /data (padrão que o bot do MNQ já usa). Se não houver /data (ex.:
+# rodando localmente) ou se quiser forçar outro caminho, use a env CRYPTO_DATA_DIR.
+#   - Railway: crie um Volume com mount path /data no serviço do bot.
+#   - Local:   cai automaticamente na pasta do projeto (comportamento antigo).
+DATA_DIR = (
+    os.environ.get("CRYPTO_DATA_DIR")
+    or ("/data" if os.path.isdir("/data") else BASE_DIR)
+)
+LOG_DIR = os.path.join(DATA_DIR, "crypto2_logs")
 os.makedirs(LOG_DIR, exist_ok=True)
+
+# Livro-razão APPEND-ONLY do estudo de TP/SL: 1 linha JSON por entrada observada.
+# NUNCA sobrescreve — acumula entre dias e sobrevive a redeploys (quando em /data).
+# É a fonte durável dos números de MFE (correu a favor) e DD/MAE (correu contra)
+# que servem para escolher o TP e o SL.
+ESTUDO_PATH = os.path.join(DATA_DIR, "estudo_tpsl.jsonl")
+
+logger.info("crypto_logger: DATA_DIR=%s | LOG_DIR=%s | ESTUDO=%s",
+            DATA_DIR, LOG_DIR, ESTUDO_PATH)
 
 _lock = threading.Lock()
 
@@ -221,4 +244,110 @@ def limpar_dia(dia: Optional[str] = None) -> Dict[str, Any]:
         "dia": dia,
         "arquivos_deletados": arquivos_deletados,
         "erros": erros,
+    }
+
+
+# =========================================================================== #
+# LIVRO-RAZÃO DO ESTUDO DE TP/SL (append-only, durável)
+# =========================================================================== #
+# Objetivo: para calibrar TP e SL SEM viés, o bot observa CADA entrada simulada
+# por uma janela FIXA completa (não para no TP/SL) e grava aqui a excursão máxima
+# a favor (MFE) e contra (DD/MAE). Uma linha JSON por entrada. Nunca sobrescreve.
+
+def registrar_estudo(reg: Dict[str, Any]) -> Dict[str, Any]:
+    """Adiciona (append) UMA linha JSON no livro-razão durável do estudo de TP/SL."""
+    reg = dict(reg or {})
+    reg.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    try:
+        with _lock:
+            with open(ESTUDO_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(reg, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.error("Falha ao gravar estudo de TP/SL: %s", exc)
+    return reg
+
+
+def ler_estudo(limite: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Lê o livro-razão do estudo (todas as linhas, ou as últimas `limite`).
+    Ignora linhas corrompidas silenciosamente (robustez).
+    """
+    if not os.path.exists(ESTUDO_PATH):
+        return []
+    linhas: List[Dict[str, Any]] = []
+    try:
+        with open(ESTUDO_PATH, "r", encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    linhas.append(json.loads(ln))
+                except ValueError:
+                    continue
+    except OSError:
+        return []
+    if limite and limite > 0:
+        return linhas[-limite:]
+    return linhas
+
+
+def _percentil(valores: List[float], p: float) -> Optional[float]:
+    """Percentil simples (p em 0..100) por interpolação linear."""
+    if not valores:
+        return None
+    vs = sorted(valores)
+    if len(vs) == 1:
+        return vs[0]
+    k = (len(vs) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(vs) - 1)
+    if f == c:
+        return vs[f]
+    return vs[f] + (vs[c] - vs[f]) * (k - f)
+
+
+def resumo_estudo(moeda: Optional[str] = None,
+                  tf: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Agrega o livro-razão em estatísticas de MFE (correu a favor) e DD/MAE
+    (correu contra) — globais e por combinação MOEDA+TF. Base direta para
+    escolher o TP (perto do MFE típico) e o SL (além do DD típico).
+    Filtros opcionais por `moeda` e/ou `tf`.
+    """
+    regs = ler_estudo()
+    if moeda:
+        regs = [r for r in regs if (r.get("moeda") or "").upper() == moeda.upper()]
+    if tf:
+        regs = [r for r in regs if r.get("tf") == tf]
+
+    def _stats(rs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        mfe = [float(r["mfe_pct"]) for r in rs if r.get("mfe_pct") is not None]
+        dd = [float(r["dd_pct"]) for r in rs if r.get("dd_pct") is not None]
+        n = len(rs)
+        def _m(v):
+            return round(sum(v) / len(v), 4) if v else None
+        def _pp(v, p):
+            r = _percentil(v, p)
+            return round(r, 4) if r is not None else None
+        return {
+            "n": n,
+            "mfe_medio": _m(mfe), "mfe_mediana": _pp(mfe, 50),
+            "mfe_p75": _pp(mfe, 75), "mfe_p90": _pp(mfe, 90),
+            "mfe_max": round(max(mfe), 4) if mfe else None,
+            "dd_medio": _m(dd), "dd_mediana": _pp(dd, 50),
+            "dd_p75": _pp(dd, 75), "dd_p90": _pp(dd, 90),
+            "dd_max": round(max(dd), 4) if dd else None,
+        }
+
+    por_combo: Dict[str, List[Dict[str, Any]]] = {}
+    for r in regs:
+        chave = f"{r.get('moeda', '?')}_{r.get('tf', '?')}"
+        por_combo.setdefault(chave, []).append(r)
+
+    return {
+        "arquivo": ESTUDO_PATH,
+        "total_entradas": len(regs),
+        "geral": _stats(regs),
+        "por_combinacao": {k: _stats(v) for k, v in sorted(por_combo.items())},
     }

@@ -11,3 +11,4 @@ managed_positions.json
 # Logs diários do modo sombra (efêmeros; resumo durável vai ao Telegram)
 crypto2_logs/*.json
 crypto2_logs/*.md
+GUIA_CONFIRMACAO_SNIPER.docx_preview/

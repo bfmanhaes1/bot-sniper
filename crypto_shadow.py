@@ -25,7 +25,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
 import requests
@@ -136,6 +136,14 @@ class SimPosition:
         # caso o cálculo por velas (candles) falhe no fechamento.
         self.max_preco = entry            # maior preço visto desde a entrada
         self.min_preco = entry            # menor preço visto desde a entrada
+        # --- Estudo FORÇADO de TP/SL (observação de janela fixa completa) ---
+        # A posição continua sendo OBSERVADA até `observa_ate` mesmo depois de
+        # bater TP/SL, para medir a excursão máxima real (MFE/DD) sem viés.
+        self.observa_ate: Optional[datetime] = None  # até quando observar
+        self.fechada_pnl: bool = False    # já registrou a SAIDA (P&L) do trade?
+        self.exit_price: Optional[float] = None       # preço de saída do P&L
+        self.motivo_saida: Optional[str] = None       # TP/SL/reversao/timeout/nova_entrada
+        self.estudo_registrado: bool = False          # já gravou no livro-razão?
 
     def registrar_preco(self, px: float) -> None:
         """Atualiza os extremos (máx/mín) com um novo preço observado."""
@@ -190,6 +198,27 @@ class CryptoShadowController:
             "posicao_timeout_min": eng.get("posicao_timeout_min", 240),
         }
         self.analise_modo: str = config.get("analise", {}).get("modo", "regras")
+
+        # ---- ESTUDO FORÇADO de TP/SL ------------------------------------- #
+        # Observa CADA entrada por uma janela FIXA (por TF) e grava a excursão
+        # completa (MFE/DD) num livro-razão durável — mesmo que o TP/SL tenha
+        # "batido" antes. Assim os números para calibrar TP/SL não ficam presos
+        # ao próprio TP/SL configurado (evita o cálculo circular).
+        est = config.get("estudo_tpsl", {}) or {}
+        self.estudo_ativa: bool = bool(est.get("ativa", True))
+        self.estudo_janela_min: Dict[str, float] = {}
+        for _tf, _v in (est.get("janela_min_por_tf") or {}).items():
+            if str(_tf).startswith("_"):
+                continue
+            try:
+                self.estudo_janela_min[_tf] = float(_v)
+            except (TypeError, ValueError):
+                continue
+        # Janela padrão (para um TF sem valor específico): usa o timeout da posição.
+        self.estudo_janela_default: float = float(
+            est.get("janela_min_default",
+                    self._eng_settings.get("posicao_timeout_min", 240))
+        )
 
         self._lock = threading.RLock()
         self._positions: Dict[str, SimPosition] = {}     # chave = MOEDA_TF
@@ -438,14 +467,33 @@ class CryptoShadowController:
         return "entrar" if cruzamento >= 2 else "aguardar"
 
     # ------------------------------------------------------------------ #
+    def _janela_estudo_min(self, tf: str) -> float:
+        """Minutos de observação do estudo para o timeframe (fallback = padrão)."""
+        return self.estudo_janela_min.get(tf, self.estudo_janela_default)
+
     def _abrir_simulacao(self, moeda: str, tf: str, action: str, entry: float,
                          cruzamento: int, sinal_tsts: str, rsi: Optional[float]):
         """Abre uma posição simulada e registra ENTRADA para cada alavancagem."""
         tp, sl = self._tp_sl(action, entry, tf)
+        chave = f"{moeda}_{tf}"
         with self._lock:
-            self._positions[f"{moeda}_{tf}"] = SimPosition(
-                moeda, tf, action, entry, tp, sl, cruzamento
-            )
+            # Se já havia uma posição observada nesta chave (ainda no estudo),
+            # finaliza o estudo dela ANTES de sobrescrever — para não perder o
+            # registro do MFE/DD daquela entrada.
+            antiga = self._positions.get(chave)
+        if antiga is not None:
+            if not antiga.fechada_pnl:
+                self._registrar_saida_pnl(antiga, entry, "nova_entrada")
+                antiga.fechada_pnl = True
+                antiga.exit_price = entry
+                antiga.motivo_saida = "nova_entrada"
+            self._finalizar_estudo(antiga)
+        pos = SimPosition(moeda, tf, action, entry, tp, sl, cruzamento)
+        if self.estudo_ativa:
+            pos.observa_ate = pos.aberta_em + timedelta(
+                minutes=self._janela_estudo_min(tf))
+        with self._lock:
+            self._positions[chave] = pos
             self.contador_entradas_sim += 1
         for alav in self.alavancagens:
             crypto_logger.registrar("ENTRADA", {
@@ -484,13 +532,17 @@ class CryptoShadowController:
         return (round(max(mfe_pct, 0.0), 4), round(max(dd_pct, 0.0), 4),
                 round(high, 8), round(low, 8))
 
-    def _fechar_simulacao(self, pos: SimPosition, exit_price: float, motivo: str):
-        """Fecha uma posição simulada e registra SAIDA para cada alavancagem."""
+    def _registrar_saida_pnl(self, pos: SimPosition, exit_price: float, motivo: str):
+        """
+        Registra a SAIDA (P&L do trade) para cada alavancagem — é o que o trade
+        REAL teria feito com o TP/SL/reversão atuais. NÃO remove a posição: no
+        estudo forçado ela continua sendo observada até o fim da janela.
+        """
         if pos.action == "buy":
             pnl_pct = (exit_price - pos.entry) / pos.entry
         else:
             pnl_pct = (pos.entry - exit_price) / pos.entry
-        # DD (excursão adversa) e MFE (excursão favorável) para estudo de TP/SL.
+        # DD (excursão adversa) e MFE (excursão favorável) ATÉ AGORA (informativo).
         mfe_pct, dd_pct, high_usado, low_usado = self._calcular_dd_mfe(pos)
         duracao_min = round((_now() - pos.aberta_em).total_seconds() / 60.0, 1)
         for alav in self.alavancagens:
@@ -519,8 +571,70 @@ class CryptoShadowController:
                 "preco_saida_simulado": exit_price,
                 "resultado_simulado": resultado,
             })
+
+    def _finalizar_estudo(self, pos: SimPosition):
+        """
+        Fecha a OBSERVAÇÃO de uma entrada: calcula a excursão da JANELA COMPLETA
+        (independente de já ter batido TP/SL) e grava 1 linha no livro-razão
+        DURÁVEL do estudo (estudo_tpsl.jsonl). Depois remove a posição.
+        São ESTES números (MFE/DD da janela cheia) que servem para calibrar o
+        TP (perto do MFE típico) e o SL (além do DD típico) sem viés.
+        """
+        if not pos.estudo_registrado:
+            ate = pos.observa_ate or _now()
+            high, low = self._high_low_desde(pos.moeda, pos.tf, pos.aberta_em, ate)
+            if high is None or low is None:
+                high, low = pos.max_preco, pos.min_preco
+            high = max(high, pos.entry)
+            low = min(low, pos.entry)
+            if pos.action == "buy":
+                mfe_pct = (high - pos.entry) / pos.entry * 100.0
+                dd_pct = (pos.entry - low) / pos.entry * 100.0
+            else:
+                mfe_pct = (pos.entry - low) / pos.entry * 100.0
+                dd_pct = (high - pos.entry) / pos.entry * 100.0
+            mfe_pct = round(max(mfe_pct, 0.0), 4)
+            dd_pct = round(max(dd_pct, 0.0), 4)
+            janela_min = round((ate - pos.aberta_em).total_seconds() / 60.0, 1)
+            tp_pct_cfg, sl_pct_cfg = self.tp_sl_por_tf.get(
+                pos.tf, (self.tp_percent, self.sl_percent))
+            crypto_logger.registrar_estudo({
+                "moeda": pos.moeda, "tf": pos.tf,
+                "direcao": "LONG" if pos.action == "buy" else "SHORT",
+                "entry": round(pos.entry, 8),
+                "aberta_em": pos.aberta_em.isoformat(),
+                "fechou_em": ate.isoformat(),
+                "janela_min": janela_min,
+                "cruzamento": pos.cruzamento,
+                # Excursão da JANELA COMPLETA (o que importa p/ calibrar TP e SL):
+                "mfe_pct": mfe_pct,          # correu A FAVOR no melhor momento (%)
+                "dd_pct": dd_pct,            # correu CONTRA no pior momento — MAE (%)
+                "high_periodo": round(high, 8),
+                "low_periodo": round(low, 8),
+                # O que o trade real teria feito com o TP/SL atual:
+                "saida_tpsl": pos.motivo_saida,   # TP/SL/reversao/timeout/nova_entrada/None
+                "exit_price": pos.exit_price,
+                "tp_percent_cfg": round(tp_pct_cfg * 100, 4),
+                "sl_percent_cfg": round(sl_pct_cfg * 100, 4),
+            })
+            pos.estudo_registrado = True
         with self._lock:
             self._positions.pop(pos.chave(), None)
+
+    def _fechar_simulacao(self, pos: SimPosition, exit_price: float, motivo: str):
+        """
+        Registra a SAIDA (P&L) do trade. Se o estudo forçado estiver ativo e a
+        janela de observação ainda não terminou, MANTÉM a posição em observação
+        (para medir a excursão completa). Caso contrário, finaliza o estudo.
+        """
+        if not pos.fechada_pnl:
+            self._registrar_saida_pnl(pos, exit_price, motivo)
+            pos.fechada_pnl = True
+            pos.exit_price = exit_price
+            pos.motivo_saida = motivo
+        if self.estudo_ativa and pos.observa_ate and _now() < pos.observa_ate:
+            return  # segue observando até o fim da janela
+        self._finalizar_estudo(pos)
 
     # ------------------------------------------------------------------ #
     def processar_sinal(self, moeda: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -702,29 +816,60 @@ class CryptoShadowController:
     # ------------------------------------------------------------------ #
     def verificar_tp_sl(self) -> int:
         """
-        Percorre as posições simuladas abertas e fecha as que atingiram TP/SL.
-        Chamado periodicamente pelo monitor. Retorna quantas foram fechadas.
+        Percorre as posições simuladas e:
+          1) Registra o P&L (SAIDA) quando o TP/SL é tocado — mas, com o ESTUDO
+             forçado ativo, NÃO para de observar: segue medindo a excursão real.
+          2) Ao fim da JANELA de observação, finaliza o estudo (grava MFE/DD da
+             janela completa no livro-razão durável) e remove a posição.
+          3) Sem estudo ativo: mantém o comportamento antigo (fecha no TP/SL e,
+             por segurança, encerra por posicao_timeout_min).
+        Chamado periodicamente pelo monitor. Retorna quantas foram finalizadas.
         """
         with self._lock:
             posicoes = list(self._positions.values())
-        fechadas = 0
+        finalizadas = 0
+        agora = _now()
         for pos in posicoes:
             px = self._preco_publico(pos.moeda, use_cache=False)
-            if not px:
+            if px:
+                # Atualiza os extremos (máx/mín) — fallback do cálculo de MFE/DD.
+                pos.registrar_preco(px)
+
+            # (1) Fim da janela de observação do estudo -> finaliza e grava.
+            if self.estudo_ativa and pos.observa_ate and agora >= pos.observa_ate:
+                if not pos.fechada_pnl:
+                    # Nunca bateu TP/SL dentro da janela -> fecha o P&L por tempo.
+                    self._registrar_saida_pnl(pos, px or pos.entry, "timeout")
+                    pos.fechada_pnl = True
+                    pos.exit_price = px or pos.entry
+                    pos.motivo_saida = "timeout"
+                self._finalizar_estudo(pos)
+                finalizadas += 1
                 continue
-            # Atualiza os extremos (máx/mín) para o cálculo de DD/MFE (fallback).
-            pos.registrar_preco(px)
-            if pos.action == "buy":
-                if px >= pos.tp:
-                    self._fechar_simulacao(pos, pos.tp, "TP"); fechadas += 1
-                elif px <= pos.sl:
-                    self._fechar_simulacao(pos, pos.sl, "SL"); fechadas += 1
-            else:
-                if px <= pos.tp:
-                    self._fechar_simulacao(pos, pos.tp, "TP"); fechadas += 1
-                elif px >= pos.sl:
-                    self._fechar_simulacao(pos, pos.sl, "SL"); fechadas += 1
-        return fechadas
+
+            # (2) TP/SL — registra P&L uma única vez; segue observando (estudo).
+            if px and not pos.fechada_pnl:
+                if pos.action == "buy":
+                    if px >= pos.tp:
+                        self._fechar_simulacao(pos, pos.tp, "TP")
+                    elif px <= pos.sl:
+                        self._fechar_simulacao(pos, pos.sl, "SL")
+                else:
+                    if px <= pos.tp:
+                        self._fechar_simulacao(pos, pos.tp, "TP")
+                    elif px >= pos.sl:
+                        self._fechar_simulacao(pos, pos.sl, "SL")
+                # Sem estudo, _fechar_simulacao já removeu a posição.
+                if not self.estudo_ativa and pos.fechada_pnl:
+                    finalizadas += 1
+
+            # (3) Segurança: encerra posição parada além do timeout (sem estudo).
+            if not self.estudo_ativa and not pos.fechada_pnl:
+                timeout_min = self._eng_settings.get("posicao_timeout_min", 240)
+                if (agora - pos.aberta_em).total_seconds() >= timeout_min * 60:
+                    self._fechar_simulacao(pos, px or pos.entry, "timeout")
+                    finalizadas += 1
+        return finalizadas
 
     # ------------------------------------------------------------------ #
     def gerar_resumo_diario(self, dia: Optional[str] = None) -> str:
@@ -854,6 +999,10 @@ class CryptoShadowController:
                 "entry": p.entry, "tp": p.tp, "sl": p.sl,
                 "cruzamento": p.cruzamento,
                 "aberta_em": p.aberta_em.isoformat(),
+                # Estado do estudo forçado (observação de janela completa):
+                "observa_ate": p.observa_ate.isoformat() if p.observa_ate else None,
+                "pnl_ja_registrado": p.fechada_pnl,
+                "motivo_saida": p.motivo_saida,
             } for k, p in self._positions.items()}
         return {
             "combinacoes": len(self.moedas) * len(self.timeframes) * len(self.alavancagens),
@@ -864,6 +1013,12 @@ class CryptoShadowController:
             "contador_sinais": self.contador_sinais,
             "contador_rsi": self.contador_rsi,
             "contador_entradas_sim": self.contador_entradas_sim,
+            "estudo_tpsl": {
+                "ativa": self.estudo_ativa,
+                "janela_min_por_tf": self.estudo_janela_min,
+                "janela_min_default": self.estudo_janela_default,
+                "total_entradas_gravadas": len(crypto_logger.ler_estudo()),
+            },
             "confirmacao": self.confirm.snapshot() if getattr(self, "confirm", None) else None,
             "catalyst": self.catalyst.snapshot() if getattr(self, "catalyst", None) else None,
         }
