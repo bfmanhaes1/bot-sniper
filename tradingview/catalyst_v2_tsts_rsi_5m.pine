@@ -1,0 +1,259 @@
+// =====================================================================
+//  CATALYST V2 + TSTS + RSI CROSS — SISTEMA COMPLETO (5m)
+// =====================================================================
+//  O QUE É
+//  -------
+//  Pine unificado que combina:
+//   1) Catalisador V2 (contexto multi-TF: 30s/1m/5m/15m/1h/2h/4h)
+//   2) Detector de sinal TSTS (você adapta conforme seu indicador)
+//   3) Confirmação de RSI cruzando sua média (até 3-4 velas atrás)
+//   4) Cálculo automático de SL/TP baseado em % fixo
+//   5) JSON completo enviado ao webhook do bot
+//
+//  FLUXO DE DECISÃO
+//  ----------------
+//   ┌─ Sinal TSTS (BUY/SELL) aparece
+//   └─► Verifica se RSI cruzou a média (lookback 3-4 velas)
+//       ├─ SIM: Dispara alerta → envia JSON completo ao bot
+//       │       Bot checa catalyst.checar() → se OK, simula entrada
+//       └─ NÃO: Aguarda próximo fechamento de barra
+//
+//  CONFIGURAÇÃO DO ALERTA
+//  ----------------------
+//   Condição:  "Catalyst V2 TSTS RSI" -> "Any alert() function call"
+//   Disparo:   "Once Per Bar Close"
+//   Webhook:   https://web-production-77454.up.railway.app/webhook/{{ticker}}
+//   Mensagem:  {{strategy.order.alert_message}} (o Pine já monta o JSON)
+//
+//  Todos os comentários em Português.
+// =====================================================================
+
+//@version=5
+indicator("Catalyst V2 + TSTS + RSI (5m)", overlay=true)
+
+// =====================================================================
+//  SEÇÃO 1: PARÂMETROS AJUSTÁVEIS
+// =====================================================================
+
+// --- Catalisador ---
+emaLen      = input.int(50,  "EMA de tendência",  minval=5, group="Catalisador")
+rsiLen      = input.int(14,  "RSI período",       minval=2, group="Catalisador")
+rsiMaLen    = input.int(14,  "Média do RSI",      minval=2, group="Catalisador")
+rangingMult = input.float(0.5, "Ranging: EMA20-EMA50 < ATR x", minval=0.1, step=0.1, group="Catalisador")
+usarVwap    = input.bool(true, "Usar VWAP", group="Catalisador")
+usarMacro   = input.bool(true, "Enviar macro 2h/4h (scalping 5m)", group="Catalisador")
+
+// --- RSI Cross (confirmação) ---
+rsiCrossLookback = input.int(4, "Lookback RSI cross (velas)", minval=1, maxval=10, group="RSI Cross")
+// Nota: 4 velas = detecta cruzamento que ocorreu há até 4 barras fechadas
+
+// --- TSTS / Sinal (ADAPTE CONFORME SEU INDICADOR) ---
+// Aqui você coloca a lógica do seu TSTS. Exemplo genérico:
+// Para TESTAR, vou usar cruzamento de EMA rápida/lenta como proxy.
+// SUBSTITUA pela lógica real do seu BSDET Helper.
+emaRapida = input.int(9,  "EMA rápida (sinal proxy)", group="TSTS Sinal")
+emaLenta  = input.int(21, "EMA lenta (sinal proxy)",  group="TSTS Sinal")
+
+// --- SL / TP (% fixa para 5m) ---
+slPct = input.float(0.5, "Stop Loss (%)", minval=0.1, step=0.1, group="Risco")
+tpPct = input.float(1.0, "Take Profit (%)", minval=0.1, step=0.1, group="Risco")
+
+// =====================================================================
+//  SEÇÃO 2: MOTOR DO CATALISADOR (multi-TF)
+// =====================================================================
+
+// Função: retorna 1=BULL, -1=BEAR, 0=NEUT baseado em EMA + RSI
+f_trend() =>
+    e50 = ta.ema(close, emaLen)
+    r   = ta.rsi(close, rsiLen)
+    rm  = ta.sma(r, rsiMaLen)
+    bull = close > e50 and r > rm and r > 50
+    bear = close < e50 and r < rm and r < 50
+    bull ? 1 : bear ? -1 : 0
+
+// Lê cada timeframe (sem repintar)
+s30s = request.security(syminfo.tickerid, "30S", f_trend(), lookahead=barmerge.lookahead_off)
+s1m  = request.security(syminfo.tickerid, "1",   f_trend(), lookahead=barmerge.lookahead_off)
+s5m  = request.security(syminfo.tickerid, "5",   f_trend(), lookahead=barmerge.lookahead_off)
+s15m = request.security(syminfo.tickerid, "15",  f_trend(), lookahead=barmerge.lookahead_off)
+s1h  = request.security(syminfo.tickerid, "60",  f_trend(), lookahead=barmerge.lookahead_off)
+s2h  = usarMacro ? request.security(syminfo.tickerid, "120", f_trend(), lookahead=barmerge.lookahead_off) : 0
+s4h  = usarMacro ? request.security(syminfo.tickerid, "240", f_trend(), lookahead=barmerge.lookahead_off) : 0
+
+// VWAP
+vw      = ta.vwap(hlc3)
+vwState = not usarVwap ? 0 : (close > vw ? 1 : close < vw ? -1 : 0)
+
+// RANGING (medido no 5m)
+f_ranging() =>
+    e20 = ta.ema(close, 20)
+    e50 = ta.ema(close, 50)
+    atr = ta.atr(14)
+    math.abs(e20 - e50) < atr * rangingMult
+isRanging = request.security(syminfo.tickerid, "5", f_ranging(), lookahead=barmerge.lookahead_off)
+
+// PULLBACK (recuo dentro da tendência)
+pbBull = (s5m == 1)  and (s15m == 1)  and (s1m != 1)
+pbBear = (s5m == -1) and (s15m == -1) and (s1m != -1)
+pbState = pbBull ? 1 : pbBear ? -1 : 0
+
+// GRADE A/B/C (5m+15m alinhados + 1h)
+alinhadoAlta  = (s5m == 1)  and (s15m == 1)
+alinhadoBaixa = (s5m == -1) and (s15m == -1)
+gradeVis = alinhadoAlta  ? (s1h == 1 ? "A" : s1h == 0 ? "B" : "C") :
+           alinhadoBaixa ? (s1h == -1 ? "A" : s1h == 0 ? "B" : "C") : "-"
+
+// Rótulos (número -> texto)
+f_lbl(x) => x == 1 ? "BULL" : x == -1 ? "BEAR" : "NEUT"
+mktLbl = isRanging ? "RANGING" : "TRENDING"
+pbLbl  = pbState == 1 ? "BULL" : pbState == -1 ? "BEAR" : "NONE"
+
+// =====================================================================
+//  SEÇÃO 3: LÓGICA DE SINAL TSTS (ADAPTE AQUI)
+// =====================================================================
+
+// EXEMPLO GENÉRICO: cruzamento de EMAs.
+// SUBSTITUA pela saída do seu BSDET Helper ou outro indicador TSTS.
+ema9  = ta.ema(close, emaRapida)
+ema21 = ta.ema(close, emaLenta)
+
+// Sinal BUY: EMA9 cruza acima da EMA21
+// Sinal SELL: EMA9 cruza abaixo da EMA21
+sinTstsBuy  = ta.crossover(ema9, ema21)
+sinTstsSell = ta.crossunder(ema9, ema21)
+
+// =====================================================================
+//  SEÇÃO 4: CONFIRMAÇÃO RSI CROSS (até N velas atrás)
+// =====================================================================
+
+rsiVal = ta.rsi(close, rsiLen)
+rsiMa  = ta.sma(rsiVal, rsiMaLen)
+
+// Cruzamento para CIMA (RSI > média) — confirma compra
+rsiCrossUp = ta.crossover(rsiVal, rsiMa)
+// Cruzamento para BAIXO (RSI < média) — confirma venda
+rsiCrossDn = ta.crossunder(rsiVal, rsiMa)
+
+// Detecta se houve cruzamento nas últimas N velas (lookback)
+var int ultimoCruzUp = na
+var int ultimoCruzDn = na
+if rsiCrossUp
+    ultimoCruzUp := bar_index
+if rsiCrossDn
+    ultimoCruzDn := bar_index
+
+// Função: retorna true se houve cross há até `n` velas
+f_crossRecente(ultimoBar, n) =>
+    not na(ultimoBar) and (bar_index - ultimoBar) <= n
+
+rsiCrossUpRecente = f_crossRecente(ultimoCruzUp, rsiCrossLookback)
+rsiCrossDnRecente = f_crossRecente(ultimoCruzDn, rsiCrossLookback)
+
+// =====================================================================
+//  SEÇÃO 5: LÓGICA DE GATILHO DO ALERTA
+// =====================================================================
+
+// Alerta dispara quando:
+//  - Sinal TSTS confirmado (BUY ou SELL)
+//  - E RSI cruzou a média na direção correta (até N velas atrás)
+
+gatilhoBuy  = sinTstsBuy  and rsiCrossUpRecente
+gatilhoSell = sinTstsSell and rsiCrossDnRecente
+
+// =====================================================================
+//  SEÇÃO 6: CÁLCULO DE SL / TP
+// =====================================================================
+
+var float precoEntrada = na
+var float precoSL = na
+var float precoTP = na
+var string ultimaAcao = na
+
+if gatilhoBuy
+    precoEntrada := close
+    precoSL      := close * (1 - slPct / 100)
+    precoTP      := close * (1 + tpPct / 100)
+    ultimaAcao   := "buy"
+
+if gatilhoSell
+    precoEntrada := close
+    precoSL      := close * (1 + slPct / 100)  // SL acima para short
+    precoTP      := close * (1 - tpPct / 100)  // TP abaixo para short
+    ultimaAcao   := "sell"
+
+// =====================================================================
+//  SEÇÃO 7: MONTAGEM DO JSON COMPLETO
+// =====================================================================
+
+// Número do cruzamento RSI (1º, 2º, 3º... — proxy simples: quantas barras atrás)
+numCruz = ultimaAcao == "buy" ? (bar_index - ultimoCruzUp) + 1 :
+          ultimaAcao == "sell" ? (bar_index - ultimoCruzDn) + 1 : 0
+
+// JSON enviado ao webhook
+jsonPayload = '{"moeda":"' + syminfo.ticker + '"' +
+              ',"action":"' + str.tostring(ultimaAcao) + '"' +
+              ',"entry":' + str.tostring(precoEntrada, "#.####") +
+              ',"sl":' + str.tostring(precoSL, "#.####") +
+              ',"tp":' + str.tostring(precoTP, "#.####") +
+              ',"timeframe":"5m"' +
+              ',"rsi_valor":' + str.tostring(rsiVal, "#.##") +
+              ',"cruzamento_numero":' + str.tostring(numCruz) +
+              ',"c30s":"' + f_lbl(s30s) + '"' +
+              ',"c1m":"'  + f_lbl(s1m)  + '"' +
+              ',"c5m":"'  + f_lbl(s5m)  + '"' +
+              ',"c15m":"' + f_lbl(s15m) + '"' +
+              ',"c1h":"'  + f_lbl(s1h)  + '"' +
+              ',"c2h":"'  + f_lbl(s2h)  + '"' +
+              ',"c4h":"'  + f_lbl(s4h)  + '"' +
+              ',"vwap":"' + f_lbl(vwState) + '"' +
+              ',"market":"' + mktLbl + '"' +
+              ',"pullback":"' + pbLbl + '"' +
+              ',"grade":"' + gradeVis + '"}'
+
+// Dispara alerta quando confirmar gatilho
+if barstate.isconfirmed and (gatilhoBuy or gatilhoSell)
+    alert(jsonPayload, alert.freq_once_per_bar_close)
+
+// =====================================================================
+//  SEÇÃO 8: PAINEL VISUAL (debug)
+// =====================================================================
+
+var table pnl = table.new(position.top_right, 2, 12, border_width=1)
+f_cor(x) => x == 1 ? color.new(color.green, 0) : x == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
+
+if barstate.islast
+    table.cell(pnl, 0, 0, "CATALYST V2 TSTS", text_color=color.white, bgcolor=color.new(color.blue, 0))
+    table.cell(pnl, 1, 0, syminfo.ticker, text_color=color.white, bgcolor=color.new(color.blue, 0))
+    table.cell(pnl, 0, 1, "30s", text_color=color.white)
+    table.cell(pnl, 1, 1, f_lbl(s30s), bgcolor=f_cor(s30s), text_color=color.white)
+    table.cell(pnl, 0, 2, "1m",  text_color=color.white)
+    table.cell(pnl, 1, 2, f_lbl(s1m),  bgcolor=f_cor(s1m),  text_color=color.white)
+    table.cell(pnl, 0, 3, "5m",  text_color=color.white)
+    table.cell(pnl, 1, 3, f_lbl(s5m),  bgcolor=f_cor(s5m),  text_color=color.white)
+    table.cell(pnl, 0, 4, "15m", text_color=color.white)
+    table.cell(pnl, 1, 4, f_lbl(s15m), bgcolor=f_cor(s15m), text_color=color.white)
+    table.cell(pnl, 0, 5, "1h",  text_color=color.white)
+    table.cell(pnl, 1, 5, f_lbl(s1h), bgcolor=f_cor(s1h), text_color=color.white)
+    table.cell(pnl, 0, 6, "2h",  text_color=color.white)
+    table.cell(pnl, 1, 6, f_lbl(s2h), bgcolor=f_cor(s2h), text_color=color.white)
+    table.cell(pnl, 0, 7, "4h",  text_color=color.white)
+    table.cell(pnl, 1, 7, f_lbl(s4h), bgcolor=f_cor(s4h), text_color=color.white)
+    table.cell(pnl, 0, 8, "VWAP", text_color=color.white)
+    table.cell(pnl, 1, 8, f_lbl(vwState), bgcolor=f_cor(vwState), text_color=color.white)
+    table.cell(pnl, 0, 9, "MKT", text_color=color.white)
+    table.cell(pnl, 1, 9, mktLbl, bgcolor=(isRanging ? color.new(color.orange, 0) : color.new(color.teal, 0)), text_color=color.white)
+    table.cell(pnl, 0, 10, "PB/GR", text_color=color.white)
+    table.cell(pnl, 1, 10, pbLbl + " " + gradeVis, bgcolor=f_cor(pbState), text_color=color.white)
+    table.cell(pnl, 0, 11, "RSI", text_color=color.white)
+    table.cell(pnl, 1, 11, str.tostring(rsiVal, "#.#") + " / " + str.tostring(rsiMa, "#.#"), 
+               bgcolor=(rsiVal > rsiMa ? color.new(color.green, 0) : color.new(color.red, 0)), 
+               text_color=color.white)
+
+// Plot visual das EMAs (exemplo TSTS)
+plot(ema9,  "EMA 9",  color=color.new(color.green, 0), linewidth=2)
+plot(ema21, "EMA 21", color=color.new(color.red, 0), linewidth=2)
+plot(vw, "VWAP", color=color.new(color.orange, 0), linewidth=1, style=plot.style_circles)
+
+// Setas visuais quando gatilho confirma
+plotshape(gatilhoBuy,  "BUY",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.small)
+plotshape(gatilhoSell, "SELL", shape.triangledown, location.abovebar, color.new(color.red, 0),   size=size.small)
