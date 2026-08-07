@@ -1,319 +1,200 @@
-# 🎯 GUIA: Configuração do Alerta TradingView — Catalyst V2 + TSTS + RSI (5m)
+# 🎯 GUIA: 3 Alertas Separados — Sniper + RSI + Catalisador (5m)
 
-## 📋 Visão Geral
+## 📋 Como o bot decide (o fluxo que você descreveu)
 
-Este guia mostra como configurar o alerta unificado que:
+O bot **já foi construído** para receber **3 alertas SEPARADOS** (nada de combinar indicadores):
 
-1. **Detecta** sinal TSTS (seu indicador BSDET ou similar)
-2. **Confirma** que o RSI cruzou a média (até 3-4 velas atrás)
-3. **Calcula** SL/TP automaticamente
-4. **Envia** JSON completo ao bot com dados do catalisador
-5. **Bot checa** `catalyst.checar()` → se aprovado, simula entrada
+```
+   1) SNIPER (rosa × azul)          →  /webhook/<MOEDA>
+      └─► O bot GUARDA o sinal como "pendente" (segura, aguardando o RSI)
+
+   2) RSI cruzou a média            →  /rsi/<MOEDA>
+      └─► Se há sinal do Sniper pendente E o RSI cruzou na direção certa
+          (dentro da janela de 3-4 velas) → o bot decide ENTRAR
+
+   3) CATALISADOR (contexto multi-TF) →  /catalyst
+      └─► ANTES de simular a entrada, checa se o contexto está a favor.
+          Se NÃO estiver → BLOQUEIA. Se estiver → simula a entrada.
+```
+
+> **Resumindo:** Sniper segura → RSI confirma → Catalisador libera ou bloqueia. Exatamente o que você pediu, e cada um é um alerta próprio.
+
+Isso está confirmado no código:
+- `engine.on_signal()` → cria o **sinal pendente** (passo 1)
+- `engine.on_rsi_cross()` → confirma o pendente e decide **entrar** (passo 2)
+- `crypto_shadow._checar_gates()` → roda `catalyst.checar()` e **bloqueia se contra** (passo 3)
 
 ---
 
-## 🔧 PASSO 1: Adaptar a Lógica TSTS no Pine
+## 🔔 ALERTA 1 — Sniper TSTS (rosa × azul)
 
-O Pine script fornecido (`catalyst_v2_tsts_rsi_5m.pine`) usa **cruzamento de EMAs como EXEMPLO**.
+Este é o **seu indicador** (o TSTS Sniper que já usa o cruzamento da linha rosa × azul). Você **não precisa mudar o indicador** — só criar o alerta apontando para o bot.
 
-### ⚠️ IMPORTANTE: Substituir pela sua lógica TSTS real
-
-**Localizar no Pine (linhas ~95-105):**
-
-```pine
-// SEÇÃO 3: LÓGICA DE SINAL TSTS (ADAPTE AQUI)
-// EXEMPLO GENÉRICO: cruzamento de EMAs.
-// SUBSTITUA pela saída do seu BSDET Helper ou outro indicador TSTS.
-ema9  = ta.ema(close, emaRapida)
-ema21 = ta.ema(close, emaLenta)
-
-sinTstsBuy  = ta.crossover(ema9, ema21)
-sinTstsSell = ta.crossunder(ema9, ema21)
-```
-
-### 🎯 Como adaptar:
-
-#### **Opção A: Você já tem um indicador TSTS separado (BSDET Helper)**
-
-Se você usa outro script Pine que gera sinais `buy`/`sell`, você precisa **integrá-lo** neste script. Exemplo:
-
-```pine
-// Importa seu indicador (se for biblioteca pública) ou copia a lógica
-// Exemplo: BSDET Helper v4 (assumindo que você tem acesso)
-
-// Variáveis do BSDET (adapte conforme seu indicador)
-bsdetBuy  = ... // condição de compra do BSDET
-bsdetSell = ... // condição de venda do BSDET
-
-// Substitui as linhas acima por:
-sinTstsBuy  = bsdetBuy
-sinTstsSell = bsdetSell
-```
-
-#### **Opção B: Usar indicador externo via `request.security`**
-
-Se seu BSDET está em outro gráfico/script:
-
-```pine
-// Exemplo: indicador "BSDET Helper v4" no mesmo ticker
-// Ajuste o nome exato do seu indicador
-sinTstsBuy  = request.security(syminfo.tickerid, "5", bsdet_buy_signal_function())
-sinTstsSell = request.security(syminfo.tickerid, "5", bsdet_sell_signal_function())
-```
-
-#### **Opção C: Manter EMAs para teste inicial**
-
-Se quiser testar o sistema primeiro, deixe as EMAs. Elas vão gerar sinais frequentes (bom para validar o webhook).
-
----
-
-## 📊 PASSO 2: Adicionar o Indicador no TradingView
-
-1. **Abra** o gráfico da moeda desejada (ex: `BTCUSDT`) no timeframe **5m**
-2. **Pine Editor** → Cole o código de `catalyst_v2_tsts_rsi_5m.pine`
-3. **"Add to Chart"**
-4. **Verifique o painel** no canto superior direito:
-   - Deve mostrar os TFs (30s, 1m, 5m, 15m, 1h, 2h, 4h)
-   - VWAP, Market (RANGING/TRENDING), Pullback, Grade
-   - RSI atual vs média
-5. **Setas** verdes (▲) e vermelhas (▼) devem aparecer quando houver gatilho
-
----
-
-## 🔔 PASSO 3: Criar o Alerta
-
-### 3.1 Configurações Básicas
+### Configuração
 
 | Campo | Valor |
 |---|---|
-| **Condição** | `Catalyst V2 + TSTS + RSI (5m)` → **Any alert() function call** |
+| **Condição** | Seu indicador Sniper → o sinal de cruzamento (buy/sell) |
 | **Opções** | ☑ Once Per Bar Close |
-| **Expiração** | Open-ended (ou defina um prazo) |
-| **Nome do alerta** | `[5m] BTCUSDT Catalyst V2` (adapte para cada moeda) |
+| **Webhook** | `https://web-production-77454.up.railway.app/webhook/{{ticker}}` |
+| **Nome** | `[5m] Sniper {{ticker}}` |
 
-### 3.2 Webhook URL
+### Mensagem (JSON)
 
-**Para cada moeda, use a URL específica:**
+Se o seu indicador Sniper **não monta JSON sozinho**, cole isto no campo *Message* do alerta:
 
-```
-https://web-production-77454.up.railway.app/webhook/{{ticker}}
-```
-
-**Exemplos:**
-- BTCUSDT: `https://web-production-77454.up.railway.app/webhook/BTCUSDT`
-- ETHUSDT: `https://web-production-77454.up.railway.app/webhook/ETHUSDT`
-- SOLUSDT: `https://web-production-77454.up.railway.app/webhook/SOLUSDT`
-
-⚠️ **IMPORTANTE:** O `{{ticker}}` será substituído automaticamente pelo TradingView.
-
-### 3.3 Mensagem do Alerta
-
-**Campo "Message":**
-
-```
-{{strategy.order.alert_message}}
-```
-
-Isso faz o TradingView enviar exatamente o JSON que o Pine montou.
-
----
-
-## 📤 PASSO 4: Exemplo de JSON Enviado
-
-Quando o alerta dispara, o webhook recebe algo assim:
-
+**Para o alerta de COMPRA:**
 ```json
-{
-  "moeda": "BTCUSDT",
-  "action": "buy",
-  "entry": 63250.50,
-  "sl": 62934.25,
-  "tp": 63882.75,
-  "timeframe": "5m",
-  "rsi_valor": 58.34,
-  "cruzamento_numero": 2,
-  "c30s": "BULL",
-  "c1m": "BULL",
-  "c5m": "BULL",
-  "c15m": "BULL",
-  "c1h": "NEUT",
-  "c2h": "BULL",
-  "c4h": "BULL",
-  "vwap": "BULL",
-  "market": "TRENDING",
-  "pullback": "NONE",
-  "grade": "B"
-}
+{"moeda":"{{ticker}}","action":"buy","timeframe":"{{interval}}"}
 ```
 
-### 🔍 Campos Explicados
+**Para o alerta de VENDA:**
+```json
+{"moeda":"{{ticker}}","action":"sell","timeframe":"{{interval}}"}
+```
 
-| Campo | Descrição |
-|---|---|
-| `moeda` | Ticker (BTCUSDT, ETHUSDT...) |
-| `action` | `buy` ou `sell` |
-| `entry` | Preço de entrada (close da vela) |
-| `sl` | Stop Loss (calculado em % configurado) |
-| `tp` | Take Profit (calculado em % configurado) |
-| `timeframe` | `5m` (fixo neste setup) |
-| `rsi_valor` | Valor do RSI no momento do sinal |
-| `cruzamento_numero` | 1º, 2º, 3º... cross (quantas velas atrás) |
-| `c30s` até `c4h` | Estado de cada timeframe (BULL/BEAR/NEUT) |
-| `vwap` | Posição vs VWAP |
-| `market` | RANGING ou TRENDING |
-| `pullback` | BULL (recuo em alta) / BEAR / NONE |
-| `grade` | A/B/C (força do contexto) |
+> O bot aceita `action`: `buy`/`sell` (também `long`/`short`, `compra`/`venda`, `1`/`-1`).
 
 ---
 
-## ✅ PASSO 5: Testar o Sistema
+## 🔔 ALERTA 2 — RSI cruzando a média
 
-### 5.1 Verificar Recepção no Bot
+Use o Pine **`rsi_cross_sniper.pine`** (que criei) — é um indicador **simples e independente** que dispara quando o RSI cruza a média.
 
-Após criar o alerta, **dispare manualmente** (clique no ícone ▶ ao lado do alerta) ou espere um sinal real.
+> ⚠️ Use o **mesmo período de RSI e a mesma média** do seu setup do Sniper, para a confirmação ser coerente.
 
-**Confira no endpoint `/diag`:**
+### Configuração
 
+| Campo | Valor |
+|---|---|
+| **Indicador** | `RSI Cross — Sniper` (cole o Pine no gráfico) |
+| **Condição** | `RSI Cross — Sniper` → **Any alert() function call** |
+| **Opções** | ☑ Once Per Bar Close |
+| **Webhook** | `https://web-production-77454.up.railway.app/rsi/{{ticker}}` |
+| **Mensagem** | deixe **VAZIO** (o Pine já monta o JSON) |
+| **Nome** | `[5m] RSI {{ticker}}` |
+
+### JSON que o Pine envia (automático)
+```json
+{"moeda":"BTCUSDT","direction":"up","timeframe":"5m","rsi":58.3,"rsi_ma":55.1}
+```
+- `direction: up` → confirma **compra**
+- `direction: down` → confirma **venda**
+
+---
+
+## 🔔 ALERTA 3 — Catalisador (contexto multi-TF)
+
+Use o Pine **`mnq_catalyst_v2_cripto.pine`** — ele lê os timeframes (30s/1m/5m/15m/1h + **2h/4h**), VWAP, regime de mercado e pullback, e manda o contexto por moeda.
+
+### Configuração
+
+| Campo | Valor |
+|---|---|
+| **Indicador** | `MNQ Catalyst V2 — CRIPTO (SNIPER)` (cole o Pine no gráfico) |
+| **Condição** | esse indicador → **Any alert() function call** |
+| **Opções** | ☑ Once Per Bar Close |
+| **Webhook** | `https://web-production-77454.up.railway.app/catalyst` |
+| **Mensagem** | deixe **VAZIO** (o Pine manda o JSON com `moeda` dentro) |
+| **Nome** | `[5m] Catalyst {{ticker}}` |
+
+> O `/catalyst` (sem moeda na URL) funciona porque o JSON já traz `"moeda":"{{ticker}}"`. Um alerta serve para **qualquer** moeda.
+
+### JSON que o Pine envia (automático)
+```json
+{"moeda":"BTCUSDT","c30s":"BULL","c1m":"BULL","c5m":"BULL","c15m":"BULL",
+ "c1h":"NEUT","c2h":"BULL","c4h":"BULL","vwap":"BULL",
+ "market":"TRENDING","pullback":"NONE","grade":"B"}
+```
+
+> **Importante:** o catalisador **não gera entrada sozinho** — ele só atualiza o contexto da moeda. A entrada só é avaliada quando o Sniper + RSI disпарam.
+
+---
+
+## ⚙️ Ordem de configuração recomendada
+
+1. **Catalisador primeiro** (Alerta 3) — assim o contexto já está "quente" quando o sinal chegar.
+2. **RSI** (Alerta 2).
+3. **Sniper** (Alerta 1) — o gatilho principal.
+
+Faça isso **por moeda** (o mesmo gráfico serve para os 3 alertas da moeda).
+
+---
+
+## ✅ Testar o fluxo completo
+
+### 1. Confirmar recepção
 ```bash
 curl https://web-production-77454.up.railway.app/diag
 ```
+Procure em `ultimos_eventos` por `webhook_sinal`, `webhook_rsi` e `catalyst`.
 
-Procure por `ultimos_eventos` → deve mostrar:
-
-```json
-{
-  "timestamp": "2026-08-07T22:45:10Z",
-  "moeda": "BTCUSDT",
-  "evento": "webhook recebido",
-  "payload": { ... }
-}
-```
-
-### 5.2 Verificar Processamento do Catalisador
-
-No log do Railway, procure por:
-
-```
-[CATALYST] BTCUSDT buy → OK (regra=R1, grade=B)
-```
-
-Ou, se bloqueado:
-
-```
-[CATALYST] BTCUSDT buy → BLOQUEADO (motivo: timing 1m contra)
-```
-
-### 5.3 Verificar Registro de Sombra
-
-**Endpoint `/registro`:**
-
+### 2. Ver o contexto do catalisador de uma moeda
 ```bash
-curl https://web-production-77454.up.railway.app/registro | tail -20
+curl https://web-production-77454.up.railway.app/diag
 ```
+(o bloco do catalisador aparece por moeda no diagnóstico)
 
-Deve mostrar entradas simuladas com todos os campos do JSON.
+### 3. Ver as entradas simuladas
+```bash
+curl https://web-production-77454.up.railway.app/registro
+```
+Deve mostrar `ENTRADA` (liberada) ou `BLOQUEADO` (catalisador barrou), com `regra` e `grade`.
+
+### 4. Estudo de TP/SL (Postgres — durável)
+```bash
+curl https://web-production-77454.up.railway.app/estudo
+```
+`diag_backend.driver` deve estar `pg8000` e `use_pg: true` (persistência ativa).
 
 ---
 
-## 🎛️ PASSO 6: Ajustar Parâmetros (Opcional)
+## 🎛️ Ajustes finos (config.json → bloco `catalyst`)
 
-No Pine, você pode ajustar via inputs:
-
-| Parâmetro | Padrão | Efeito |
+| Chave | Padrão | O que faz |
 |---|---|---|
-| `rsiCrossLookback` | 4 velas | Tolerância para RSI cross "antigo" |
-| `slPct` | 0.5% | Stop Loss |
-| `tpPct` | 1.0% | Take Profit |
-| `rangingMult` | 0.5 | Sensibilidade do filtro RANGING |
-| `usarMacro` | true | Enviar c2h/c4h (ligar para 5m) |
+| `ativa` | `true` | Liga/desliga o catalisador como gate |
+| `bloquear_ranging` | `false` | **Removido** a seu pedido (não bloqueia lateralização) |
+| `pullback_ativo` | `true` | Só entra na retomada após pullback |
+| `timing_rapido` | `true` | Usa 1m/5m como confirmação de micro-timing |
+| `bloquear_contra_macro` | `false` | **Deixe false por ora** (coletando dados 2h/4h). Ligue quando for pro real |
 
 ---
 
-## 🔥 PASSO 7: Replicar para Outras Moedas
+## ⚠️ Troubleshooting
 
-Para cada moeda adicional:
+### Bot responde `ignorado` / `MODO AUTÔNOMO`
+- O bot está com `aceitar_webhooks=false`. Para receber os alertas do TradingView, precisa estar `true` no config. (Me avise que eu ajusto.)
 
-1. **Abra o gráfico** da moeda (5m)
-2. **Adicione o mesmo indicador** (sem modificar o código)
-3. **Crie um novo alerta** com:
-   - Webhook URL específico da moeda
-   - Nome do alerta identificando a moeda
-4. **Verifique** no `/diag` que o bot reconhece a nova moeda
+### Alerta do Sniper chega mas nunca entra
+- Verifique se o RSI cruzou **na direção certa** dentro da janela (o `on_rsi_cross` confirma o pendente).
+- Veja em `/registro` se saiu `AGUARDAR` (esperando RSI) ou `BLOQUEADO` (catalisador barrou).
 
----
+### Sempre `BLOQUEADO` pelo catalisador
+- Confira `bloquear_ranging=false` e `bloquear_contra_macro=false`.
+- Veja o `motivo` e a `regra` no evento `BLOQUEADO` do `/registro`.
 
-## 📊 PASSO 8: Acompanhar Resultados
-
-### Logs Diários
-
-Consulte os arquivos:
-- `/shared/crypto2_logs/crypto_2026-08-07.json` (máquina)
-- `/shared/crypto2_logs/crypto_2026-08-07.md` (humano)
-
-### Resumo no Telegram
-
-Todo dia às 23:59 UTC, o bot envia:
-- Total de sinais recebidos
-- Entradas simuladas por moeda/TF
-- Win rate por grade (A/B/C)
-- Win rate por regra do catalisador
+### RSI não dispara
+- Confirme o mesmo período/média do RSI do seu setup.
+- Teste com o `maTipo` = SMA (padrão do seu setup).
 
 ---
 
-## ⚠️ Troubleshooting Comum
+## 🎯 Checklist de ativação (por moeda)
 
-### ❌ Alerta não dispara
-
-- Verifique se há setas no gráfico (▲ buy, ▼ sell)
-- Confirme que "Once Per Bar Close" está ativo
-- Teste com lookback maior (6-8 velas) temporariamente
-
-### ❌ Webhook retorna erro 400
-
-- JSON malformado → confira se a mensagem é `{{strategy.order.alert_message}}`
-- Campos faltando → verifique se o Pine montou o JSON completo
-
-### ❌ Bot bloqueia todas as entradas
-
-- Verifique `config.json` → `bloquear_ranging` deve estar `false`
-- Verifique `bloquear_contra_macro` → deixe `false` por ora (coleta de dados)
-- Confira `/diag/catalyst/BTCUSDT` para ver os TFs em tempo real
-
-### ❌ Cruzamento RSI não detectado
-
-- Aumente `rsiCrossLookback` para 6-8 velas
-- Verifique visualmente no painel se RSI > média quando espera cross up
+- [ ] Alerta 3 (Catalisador) criado → `/catalyst`, mensagem vazia
+- [ ] Alerta 2 (RSI) criado → `/rsi/{{ticker}}`, mensagem vazia
+- [ ] Alerta 1 (Sniper) criado → `/webhook/{{ticker}}`, JSON com `action`
+- [ ] Todos com "Once Per Bar Close"
+- [ ] `/diag` mostra os 3 eventos chegando
+- [ ] `/registro` mostra `ENTRADA` ou `BLOQUEADO` com regra/grade
+- [ ] `/estudo` mostra `driver: pg8000`, `use_pg: true`
 
 ---
 
-## 🎯 Checklist de Ativação
+## 🚀 Depois de rodar alguns dias
 
-- [ ] Pine adaptado com lógica TSTS real (ou EMA para teste)
-- [ ] Indicador adicionado no gráfico 5m
-- [ ] Painel visual mostra TFs corretos
-- [ ] Alerta criado com webhook correto
-- [ ] Mensagem = `{{strategy.order.alert_message}}`
-- [ ] Teste manual enviado (clique no ▶ do alerta)
-- [ ] `/diag` mostra webhook recebido
-- [ ] `/registro` mostra entrada simulada
-- [ ] Log do Railway mostra processamento do catalisador
-- [ ] Replicado para todas as moedas desejadas
-
----
-
-## 🚀 Próximos Passos
-
-Após rodar em sombra por alguns dias:
-
-1. **Analisar win rate** por grade e por regra
-2. **Decidir** quais regras/grades podar
-3. **Calibrar TP/SL** baseado em MFE/DD real (dados do Postgres)
-4. **Configurar `bloquear_contra_macro: true`** quando for pro real
-5. **Testar** com alavancagem 5x (baseline) e 10x (só grade A)
-
----
-
-**Dúvidas? Verifique:**
-- Logs do Railway: `https://railway.app` → seu projeto → Deployments → Logs
-- Endpoint de diagnóstico: `https://web-production-77454.up.railway.app/diag/catalyst/BTCUSDT`
-- Arquivo de config: `/home/ubuntu/bot_tsts_sniper/config.json`
+1. Trago o **win rate por regra** e **por grade** (A/B/C).
+2. Decidimos quais regras podar (R3 fallback, grade C, R9 são candidatos).
+3. Calibramos TP/SL com **MFE/DD real** (dados do Postgres).
+4. Quando for pro real em 5m: ligar `bloquear_contra_macro: true`, começar com **5x** (10x só grade A).

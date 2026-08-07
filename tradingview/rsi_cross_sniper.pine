@@ -1,0 +1,84 @@
+// =====================================================================
+//  RSI CROSS — CONFIRMADOR DO SNIPER (alerta separado)
+// =====================================================================
+//  O QUE É
+//  -------
+//  Indicador SIMPLES e INDEPENDENTE que dispara um alerta toda vez que o
+//  RSI CRUZA a sua média (para cima ou para baixo). NÃO combina com o
+//  Sniper nem com o catalisador — é um alerta PRÓPRIO, do jeito que você
+//  pediu (3 alertas separados).
+//
+//  ONDE ENTRA NO FLUXO DO BOT
+//  --------------------------
+//    1) Sniper (rosa x azul)  -> /webhook/<MOEDA>   (segura o sinal)
+//    2) ESTE RSI cross        -> /rsi/<MOEDA>        (confirma o sinal)
+//    3) Catalisador (contexto)-> /catalyst          (libera ou bloqueia)
+//
+//  O bot só entra se: houve sinal do Sniper pendente + o RSI cruzou na
+//  direção certa (dentro da janela de N velas) + o catalisador estiver
+//  a favor. Este arquivo cuida SÓ do passo 2.
+//
+//  COMO USAR
+//   1) Adicione no MESMO gráfico da moeda (timeframe do setup: 5m ou 1m).
+//   2) Crie 1 alerta:
+//        Condição = "RSI Cross — Sniper" -> "Any alert() function call"
+//        Disparo  = "Once Per Bar Close"
+//        Webhook  = https://web-production-77454.up.railway.app/rsi/{{ticker}}
+//        Mensagem = deixe VAZIO (o Pine já monta o JSON no alert()).
+//   3) Repita para cada moeda (mesmo indicador, só troca o gráfico).
+//
+//  IMPORTANTE: use o MESMO período de RSI e a MESMA média do seu setup do
+//  Sniper, para que a confirmação seja coerente.
+//
+//  Todos os comentários em Português.
+// =====================================================================
+
+//@version=5
+indicator("RSI Cross — Sniper", overlay=false)
+
+// ---------------------------------------------------------------------
+//  ENTRADAS
+// ---------------------------------------------------------------------
+rsiLen   = input.int(14, "RSI período", minval=2)
+rsiMaLen = input.int(14, "Média do RSI", minval=2)
+maTipo   = input.string("SMA", "Tipo da média", options=["SMA", "EMA"])
+
+// ---------------------------------------------------------------------
+//  CÁLCULO
+// ---------------------------------------------------------------------
+rsiVal = ta.rsi(close, rsiLen)
+rsiMa  = maTipo == "EMA" ? ta.ema(rsiVal, rsiMaLen) : ta.sma(rsiVal, rsiMaLen)
+
+// Cruzamentos
+crossUp = ta.crossover(rsiVal, rsiMa)    // RSI passou ACIMA da média -> confirma COMPRA
+crossDn = ta.crossunder(rsiVal, rsiMa)   // RSI passou ABAIXO da média -> confirma VENDA
+
+// ---------------------------------------------------------------------
+//  FEED JSON para /rsi/<MOEDA>
+//   direction = "up"  -> confirma buy
+//   direction = "down"-> confirma sell
+//  O timeframe sai automático via {{interval}} não é possível dentro do
+//  alert(), então mandamos o TF do próprio gráfico com timeframe.period.
+// ---------------------------------------------------------------------
+f_json(dir) =>
+    '{"moeda":"' + syminfo.ticker + '"' +
+      ',"direction":"' + dir + '"' +
+      ',"timeframe":"' + timeframe.period + '"' +
+      ',"rsi":' + str.tostring(rsiVal, "#.##") +
+      ',"rsi_ma":' + str.tostring(rsiMa, "#.##") + '}'
+
+if barstate.isconfirmed and crossUp
+    alert(f_json("up"), alert.freq_once_per_bar_close)
+if barstate.isconfirmed and crossDn
+    alert(f_json("down"), alert.freq_once_per_bar_close)
+
+// ---------------------------------------------------------------------
+//  VISUAL
+// ---------------------------------------------------------------------
+plot(rsiVal, "RSI", color=color.new(color.blue, 0), linewidth=2)
+plot(rsiMa,  "Média RSI", color=color.new(color.orange, 0), linewidth=1)
+hline(50, "50", color=color.new(color.gray, 60))
+hline(70, "70", color=color.new(color.red, 70))
+hline(30, "30", color=color.new(color.green, 70))
+plotshape(crossUp, "Cross Up",   shape.triangleup,   location.bottom, color.new(color.green, 0), size=size.tiny)
+plotshape(crossDn, "Cross Down", shape.triangledown, location.top,    color.new(color.red, 0),   size=size.tiny)
