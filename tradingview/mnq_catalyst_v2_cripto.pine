@@ -61,6 +61,10 @@ s1  = request.security(syminfo.tickerid, "1",   f_trend(), lookahead=barmerge.lo
 s5  = request.security(syminfo.tickerid, "5",   f_trend(), lookahead=barmerge.lookahead_off)
 s15 = request.security(syminfo.tickerid, "15",  f_trend(), lookahead=barmerge.lookahead_off)
 s60 = request.security(syminfo.tickerid, "60",  f_trend(), lookahead=barmerge.lookahead_off)
+// Contexto MACRO (tendencia-mae) — usado no scalping do 5m (2h e 4h).
+usarMacro = input.bool(true, "Enviar contexto macro (2h/4h)")
+s120 = usarMacro ? request.security(syminfo.tickerid, "120", f_trend(), lookahead=barmerge.lookahead_off) : 0
+s240 = usarMacro ? request.security(syminfo.tickerid, "240", f_trend(), lookahead=barmerge.lookahead_off) : 0
 
 // ---------------------------------------------------------------------
 //  VWAP (do grafico atual). BULL se preco acima, BEAR se abaixo.
@@ -118,6 +122,8 @@ fc = '{"moeda":"' + syminfo.ticker + '"' +
      ',"c5m":"'  + f_lbl(s5)  + '"' +
      ',"c15m":"' + f_lbl(s15) + '"' +
      ',"c1h":"'  + f_lbl(s60) + '"' +
+     ',"c2h":"'  + f_lbl(s120) + '"' +
+     ',"c4h":"'  + f_lbl(s240) + '"' +
      ',"vwap":"' + f_lbl(vwState) + '"' +
      ',"market":"' + mktLbl + '"' +
      ',"pullback":"' + pbLbl + '"' +

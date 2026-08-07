@@ -133,19 +133,51 @@ class TestV2Regras(unittest.TestCase):
     """Regras NOVAS da V2: RANGING, pullback, timing 30s/1m e grade A/B/C."""
 
     def test_ranging_descarta(self):
-        s = store()
+        s = store(bloquear_ranging=True)
         # entrada que seria R4 (tudo alinhado), mas mercado lateral -> descarta
         s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BULL",
                             "vwap": "BULL", "market": "RANGING"})
         ok, det = s.checar("BTC", "buy")
         self.assertFalse(ok); self.assertEqual(det["regra"], "RANGING")
 
-    def test_ranging_desligado_entra(self):
+    def test_ranging_desligado_por_padrao_entra(self):
+        # padrão do store de teste (bloquear_ranging=False agora) -> não bloqueia
         s = store(bloquear_ranging=False)
         s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BULL",
                             "vwap": "BULL", "market": "RANGING"})
         ok, det = s.checar("BTC", "buy")
         self.assertTrue(ok); self.assertEqual(det["regra"], "R4")
+
+    def test_macro_contra_bloqueia(self):
+        s = store(bloquear_contra_macro=True)
+        # base R2 liberaria, mas 2h e 4h ambos CONTRA (BEAR num buy) -> macro
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "c2h": "BEAR", "c4h": "BEAR", "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertFalse(ok); self.assertEqual(det["regra"], "macro")
+
+    def test_macro_um_favor_nao_bloqueia(self):
+        s = store(bloquear_contra_macro=True)
+        # 2h contra mas 4h a favor -> não são TODOS contra -> passa (R2)
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "c2h": "BEAR", "c4h": "BULL", "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
+
+    def test_macro_sem_dados_nao_opina(self):
+        s = store(bloquear_contra_macro=True)
+        # 2h/4h ausentes (NEUT) -> filtro macro não opina -> passa (R2)
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
+
+    def test_macro_desligado_por_padrao(self):
+        s = store()  # bloquear_contra_macro default False
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "c2h": "BEAR", "c4h": "BEAR", "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
 
     def test_pullback_contra_cancela(self):
         s = store()
@@ -229,9 +261,10 @@ class TestV2Regras(unittest.TestCase):
         self.assertEqual(r["estado"]["market"], "RANGING")
         self.assertEqual(r["estado"]["pullback"], "BULL")
         snap = s.snapshot()
-        self.assertTrue(snap["bloquear_ranging"])
+        self.assertFalse(snap["bloquear_ranging"])   # padrão desligado
         self.assertTrue(snap["pullback_ativo"])
         self.assertTrue(snap["timing_rapido"])
+        self.assertFalse(snap["bloquear_contra_macro"])  # padrão desligado
 
 
 class TestFrescorLegado(unittest.TestCase):

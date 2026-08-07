@@ -126,12 +126,14 @@
     "_comentario_stale": "Se o ultimo estado do catalisador da moeda for mais velho que isto (900s = 15min) OU nunca tiver chegado, o filtro NAO opina: deixa passar como LEGADO (entra). Assim voce liga as moedas uma a uma sem travar as que ainda nao tem alerta.",
     "fail_closed": false,
     "_comentario_fail_closed": "false = sem estado fresco -> ENTRA (legado, igual MNQ). true = sem estado fresco -> BLOQUEIA (so entra com catalisador confirmando). Deixe false durante a montagem dos alertas.",
-    "bloquear_ranging": true,
-    "_comentario_ranging": "REGRA V2 (MNQ Catalyst V2). true = quando o indicador manda market=RANGING (mercado lateral), a entrada e DESCARTADA. false = ignora o regime de mercado. Precisa que o alerta envie o campo 'market'.",
+    "bloquear_ranging": false,
+    "_comentario_ranging": "REGRA V2 (MNQ Catalyst V2). DESLIGADO a pedido (nao filtra por ranging). true = quando o indicador manda market=RANGING (mercado lateral), a entrada e DESCARTADA. false = ignora o regime de mercado.",
     "pullback_ativo": true,
     "_comentario_pullback": "REGRA V2. true = so entra na RETOMADA: se o campo 'pullback' vier CONTRA o sinal (reversao), cancela/espera; pullback a favor do sinal confirma a retomada. false = ignora o pullback. Precisa que o alerta envie o campo 'pullback' (BULL/BEAR/NONE).",
     "timing_rapido": true,
-    "_comentario_timing": "REGRA V2. true = afina o gatilho pelos timeframes rapidos: se 30s E 1m estiverem AMBOS contra o sinal, espera a retomada. false = ignora 30s/1m. Precisa que o alerta envie os campos 'c30s' e 'c1m'."
+    "_comentario_timing": "REGRA V2. true = afina o gatilho pelos timeframes rapidos: se 30s E 1m estiverem AMBOS contra o sinal, espera a retomada. false = ignora 30s/1m. Precisa que o alerta envie os campos 'c30s' e 'c1m'.",
+    "bloquear_contra_macro": false,
+    "_comentario_macro": "FILTRO MACRO (para SCALPING no 5m). true = usa o contexto de 2h e 4h como tendencia-mae: se TODOS os TFs macro decididos (c2h/c4h) estiverem CONTRA o sinal, BLOQUEIA (evita scalp contra a tendencia maior). false = ignora 2h/4h. Precisa que o alerta envie 'c2h' e/ou 'c4h'. Recomendado LIGAR quando operar 5m; deixe false no 1m."
   },
   "engine": {
     "require_fresh_cross_bars": 3,

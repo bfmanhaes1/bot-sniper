@@ -99,13 +99,18 @@ class CatalystStore:
         self.fail_closed: bool = bool(conf.get("fail_closed", False))
         # --- Regras NOVAS portadas do MNQ Catalyst V2 (todas configuráveis) ---
         # RANGING: descarta a entrada quando o mercado está lateral.
-        self.bloquear_ranging: bool = bool(conf.get("bloquear_ranging", True))
+        # Padrão DESLIGADO (a pedido) — só bloqueia se explicitamente ligado.
+        self.bloquear_ranging: bool = bool(conf.get("bloquear_ranging", False))
         # PULLBACK: só entra na RETOMADA (pullback a favor do sinal); se o
         # pullback for contra o sinal, é reversão -> cancela/espera.
         self.pullback_ativo: bool = bool(conf.get("pullback_ativo", True))
         # TIMING 30S/1M: usa os timeframes rápidos para afinar o gatilho.
         # Se ambos (30s E 1m) estiverem CONTRA o sinal, o timing está ruim -> espera.
         self.timing_rapido: bool = bool(conf.get("timing_rapido", True))
+        # MACRO 2H/4H (scalping no 5m): tendência-mãe. Se TODOS os TFs macro
+        # decididos (c2h/c4h) estiverem CONTRA o sinal, bloqueia (evita scalp
+        # contra a tendência maior). Padrão desligado (use no 5m).
+        self.bloquear_contra_macro: bool = bool(conf.get("bloquear_contra_macro", False))
         # Estado: "MOEDA" -> {"c30s","c1m","c5m","c15m","c1h","vwap",
         #                      "market","pullback","ts"}
         self._estado: Dict[str, Dict[str, Any]] = {}
@@ -150,6 +155,8 @@ class CatalystStore:
             "c5m": "c5m", "5m": "c5m", "m5": "c5m", "tf5m": "c5m",
             "c15m": "c15m", "15m": "c15m", "m15": "c15m", "tf15m": "c15m",
             "c1h": "c1h", "1h": "c1h", "h1": "c1h", "tf1h": "c1h",
+            "c2h": "c2h", "2h": "c2h", "h2": "c2h", "tf2h": "c2h",
+            "c4h": "c4h", "4h": "c4h", "h4": "c4h", "tf4h": "c4h",
             "vwap": "vwap", "vw": "vwap",
         }
         # Campos ESPECIAIS (valores próprios).
@@ -175,7 +182,8 @@ class CatalystStore:
             reg.update(achou)
             reg["ts"] = time.time()
             self._estado[chave] = reg
-        campos = ("c30s", "c1m", "c5m", "c15m", "c1h", "vwap", "market", "pullback")
+        campos = ("c30s", "c1m", "c5m", "c15m", "c1h", "c2h", "c4h",
+                  "vwap", "market", "pullback")
         logger.info("Catalisador %s: %s", chave,
                     {k: reg.get(k) for k in campos})
         return {"ok": True, "moeda": chave,
@@ -211,8 +219,8 @@ class CatalystStore:
         idade = agora - float(st.get("ts", 0)) if st else None
 
         # --- Frescor / LEGADO -----------------------------------------
-        campos_estado = ("c30s", "c1m", "c5m", "c15m", "c1h", "vwap",
-                         "market", "pullback")
+        campos_estado = ("c30s", "c1m", "c5m", "c15m", "c1h", "c2h", "c4h",
+                         "vwap", "market", "pullback")
         if not st or idade is None or idade > self.stale_segundos:
             base = {"ativa": True, "moeda": self._chave(moeda), "action": action,
                     "idade_seg": round(idade, 1) if idade is not None else None,
@@ -230,6 +238,8 @@ class CatalystStore:
         c5m = st.get("c5m", "NEUT")
         c15 = st.get("c15m", "NEUT")
         c1h = st.get("c1h", "NEUT")
+        c2h = st.get("c2h", "NEUT")
+        c4h = st.get("c4h", "NEUT")
         vwap = st.get("vwap", "NEUT")
         market = normalizar_market(st.get("market"))
         pullback = normalizar_pullback(st.get("pullback"))
@@ -238,6 +248,8 @@ class CatalystStore:
         r5 = self._rel(c5m, alvo)
         r15 = self._rel(c15, alvo)
         r1 = self._rel(c1h, alvo)
+        r2h = self._rel(c2h, alvo)
+        r4h = self._rel(c4h, alvo)
         vw = self._rel(vwap, alvo)
         rpb = self._rel(
             "BULL" if pullback == "BULL" else "BEAR" if pullback == "BEAR" else "NEUT",
@@ -260,10 +272,11 @@ class CatalystStore:
                 "grade": grade,
                 "market": market, "pullback": pullback,
                 "estado": {"c30s": c30s, "c1m": c1m, "c5m": c5m, "c15m": c15,
-                           "c1h": c1h, "vwap": vwap,
+                           "c1h": c1h, "c2h": c2h, "c4h": c4h, "vwap": vwap,
                            "market": market, "pullback": pullback},
                 "relativo": {"c30s": r30, "c1m": r1m, "c5m": r5, "c15m": r15,
-                             "c1h": r1, "vwap": vw, "pullback": rpb},
+                             "c1h": r1, "c2h": r2h, "c4h": r4h,
+                             "vwap": vw, "pullback": rpb},
                 "idade_seg": round(idade, 1),
             }
             return ok, det
@@ -271,6 +284,16 @@ class CatalystStore:
         # === REGRA RANGING (V2) — mercado lateral é DESCARTADO =========
         if self.bloquear_ranging and market == "RANGING":
             return resp(False, "RANGING", "mercado lateral (ranging) — descartado")
+
+        # === FILTRO MACRO 2H/4H (scalping no 5m) ======================
+        # Tendência-mãe: se TODOS os TFs macro DECIDIDOS (2h/4h) estiverem
+        # CONTRA o sinal, bloqueia (não faz scalp contra a tendência maior).
+        # Se nenhum macro veio decidido (ambos N/ausentes), não opina.
+        if self.bloquear_contra_macro:
+            macro = [r for r in (r2h, r4h) if r != "N"]
+            if macro and all(r == "CONTRA" for r in macro):
+                return resp(False, "macro",
+                            "contra a tendência-mãe (2h/4h) — bloqueado")
 
         # === DECISÃO-BASE: as 9 regras clássicas (R1..R9) ==============
         def _base() -> Tuple[bool, str, str]:
@@ -343,6 +366,7 @@ class CatalystStore:
                 "bloquear_ranging": self.bloquear_ranging,
                 "pullback_ativo": self.pullback_ativo,
                 "timing_rapido": self.timing_rapido,
+                "bloquear_contra_macro": self.bloquear_contra_macro,
                 "moedas_com_estado": len(self._estado),
                 "estado": {k: dict(v) for k, v in self._estado.items()},
             }
