@@ -1,0 +1,7 @@
+# Nixpacks (Railway) — garante a biblioteca libpq no runtime.
+# Sem isto, psycopg2-binary quebra com:
+#   ImportError: libpq.so.5: cannot open shared object file
+# O pacote nix "postgresql" fornece libpq.so.5.
+# O token "..." mantém os pacotes padrão detectados pelo Nixpacks e apenas ACRESCENTA postgresql.
+[phases.setup]
+nixPkgs = ["...", "postgresql"]
