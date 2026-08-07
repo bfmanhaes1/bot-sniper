@@ -80,18 +80,32 @@ ESTUDO_TABELA = os.environ.get("ESTUDO_TABELA", "estudo_tpsl")
 
 _USE_PG = False
 _psycopg2 = None
-_pg_Json = None
+_pg8000 = None
+_pg_driver = None          # "psycopg2" | "pg8000" | None
 _pg_import_error = None
 if DATABASE_URL:
+    # 1ª opção: psycopg2 (rápido, em C). Pode falhar no Railway/Nixpacks por
+    #           falta da libpq do sistema (libpq.so.5). Se falhar, tentamos o
+    #           pg8000, que é PURO-PYTHON e não depende de nenhuma lib nativa.
+    _erros = []
     try:
         import psycopg2 as _psycopg2  # type: ignore
-        from psycopg2.extras import Json as _pg_Json  # type: ignore
+        _pg_driver = "psycopg2"
         _USE_PG = True
-        logger.info("crypto_logger: estudo usará POSTGRES (DATABASE_URL detectada).")
-    except Exception as _exc:  # noqa: BLE001  (ImportError e outros erros de carga da libpq)
-        _pg_import_error = "%s: %s" % (type(_exc).__name__, _exc)
-        logger.error("crypto_logger: psycopg2 indisponível (%s) — usando JSONL.", _pg_import_error)
-        _USE_PG = False
+    except Exception as _exc:  # noqa: BLE001
+        _erros.append("psycopg2 -> %s: %s" % (type(_exc).__name__, _exc))
+        try:
+            import pg8000.dbapi as _pg8000  # type: ignore
+            _pg_driver = "pg8000"
+            _USE_PG = True
+        except Exception as _exc2:  # noqa: BLE001
+            _erros.append("pg8000 -> %s: %s" % (type(_exc2).__name__, _exc2))
+    if _USE_PG:
+        logger.info("crypto_logger: estudo usará POSTGRES via driver '%s'.", _pg_driver)
+    else:
+        _pg_import_error = " | ".join(_erros)
+        logger.error("crypto_logger: nenhum driver Postgres disponível (%s) — usando JSONL.",
+                     _pg_import_error)
 else:
     logger.info("crypto_logger: sem DATABASE_URL — estudo usará arquivo JSONL (%s).",
                 ESTUDO_PATH)
@@ -101,8 +115,24 @@ _pg_lock = threading.Lock()
 
 
 def _pg_connect():
-    """Abre uma conexão nova (autocommit). Conexão curta = robusto a drops."""
-    conn = _psycopg2.connect(DATABASE_URL, connect_timeout=10)
+    """Abre uma conexão nova (autocommit). Conexão curta = robusto a drops.
+    Funciona tanto com psycopg2 (aceita a URL direto) quanto com pg8000
+    (puro-Python, precisa dos campos separados extraídos da URL)."""
+    if _pg_driver == "psycopg2":
+        conn = _psycopg2.connect(DATABASE_URL, connect_timeout=10)
+        conn.autocommit = True
+        return conn
+    # pg8000: precisa de host/porta/usuário/senha/database separados.
+    from urllib.parse import urlparse, unquote
+    u = urlparse(DATABASE_URL)
+    conn = _pg8000.connect(
+        user=unquote(u.username or ""),
+        password=unquote(u.password or ""),
+        host=u.hostname or "localhost",
+        port=int(u.port or 5432),
+        database=(u.path or "/").lstrip("/") or "railway",
+        timeout=10,
+    )
     conn.autocommit = True
     return conn
 
@@ -110,16 +140,22 @@ def _pg_connect():
 def _pg_exec(sql: str, params=None, fetch: Optional[str] = None):
     """Executa uma query fechando a conexão ao final. fetch: None|'one'|'all'."""
     conn = None
+    cur = None
     try:
         conn = _pg_connect()
-        with conn.cursor() as cur:
-            cur.execute(sql, params or ())
-            if fetch == "all":
-                return cur.fetchall()
-            if fetch == "one":
-                return cur.fetchone()
-            return None
+        cur = conn.cursor()
+        cur.execute(sql, params or ())
+        if fetch == "all":
+            return cur.fetchall()
+        if fetch == "one":
+            return cur.fetchone()
+        return None
     finally:
+        if cur is not None:
+            try:
+                cur.close()
+            except Exception:  # noqa: BLE001
+                pass
         if conn is not None:
             try:
                 conn.close()
@@ -194,8 +230,10 @@ def estudo_diag() -> Dict[str, Any]:
         "backend": estudo_backend(),
         "database_url_presente": bool(url),
         "database_url_host": host,          # só host:porta, sem usuário/senha
+        "driver": _pg_driver,
         "psycopg2_importado": _psycopg2 is not None,
-        "erro_import_psycopg2": _pg_import_error,
+        "pg8000_importado": _pg8000 is not None,
+        "erro_import_driver": _pg_import_error,
         "use_pg": _USE_PG,
         "pg_ready": _pg_ready,
         "conexao_ok": conexao_ok,
@@ -421,10 +459,10 @@ def registrar_estudo(reg: Dict[str, Any]) -> Dict[str, Any]:
         try:
             _pg_exec(
                 f"INSERT INTO {ESTUDO_TABELA} "
-                f"(moeda, tf, mfe_pct, dd_pct, payload) VALUES (%s, %s, %s, %s, %s)",
+                f"(moeda, tf, mfe_pct, dd_pct, payload) VALUES (%s, %s, %s, %s, %s::jsonb)",
                 (reg.get("moeda"), reg.get("tf"),
                  _f(reg.get("mfe_pct")), _f(reg.get("dd_pct")),
-                 _pg_Json(reg)),
+                 json.dumps(reg, ensure_ascii=False)),
             )
             return reg
         except Exception as exc:  # noqa: BLE001
@@ -456,8 +494,18 @@ def ler_estudo(limite: Optional[int] = None) -> List[Dict[str, Any]]:
                 rows = _pg_exec(
                     f"SELECT payload FROM {ESTUDO_TABELA} ORDER BY id",
                     fetch="all") or []
-            # psycopg2 já decodifica JSONB em dict.
-            return [r[0] for r in rows if isinstance(r[0], dict)]
+            # psycopg2 decodifica JSONB em dict; pg8000 pode devolver str.
+            saida: List[Dict[str, Any]] = []
+            for r in rows:
+                p = r[0]
+                if isinstance(p, str):
+                    try:
+                        p = json.loads(p)
+                    except ValueError:
+                        continue
+                if isinstance(p, dict):
+                    saida.append(p)
+            return saida
         except Exception as exc:  # noqa: BLE001
             logger.error("Falha ao ler estudo do Postgres (%s) — fallback JSONL.", exc)
 
