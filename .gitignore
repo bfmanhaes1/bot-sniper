@@ -12,3 +12,7 @@ managed_positions.json
 crypto2_logs/*.json
 crypto2_logs/*.md
 GUIA_CONFIRMACAO_SNIPER.docx_preview/
+
+# Artefato local do estudo (não versionar)
+estudo_tpsl.jsonl
+crypto2_logs/
