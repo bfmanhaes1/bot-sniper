@@ -123,7 +123,7 @@ class SimPosition:
 
     def __init__(self, moeda: str, tf: str, action: str, entry: float,
                  tp: float, sl: float, cruzamento: int,
-                 grade: Optional[str] = None):
+                 grade: Optional[str] = None, regra: Optional[str] = None):
         self.moeda = moeda
         self.tf = tf
         self.action = action              # buy/sell
@@ -134,6 +134,9 @@ class SimPosition:
         # GRADE A/B/C do catalisador (V2) no momento da entrada — permite medir
         # o win-rate por grade no estudo (A=contexto forte ... C=contra-tend.).
         self.grade = grade
+        # Regra do catalisador que LIBEROU a entrada (R2/R4/R6/... ou legado) —
+        # permite medir o win-rate POR REGRA e podar as de baixo desempenho.
+        self.regra = regra
         self.aberta_em = _now()
         # Rastreamento contínuo dos extremos de preço enquanto a posição está
         # aberta (atualizado a cada verificação do monitor). Serve de reserva
@@ -477,7 +480,7 @@ class CryptoShadowController:
 
     def _abrir_simulacao(self, moeda: str, tf: str, action: str, entry: float,
                          cruzamento: int, sinal_tsts: str, rsi: Optional[float],
-                         grade: Optional[str] = None):
+                         grade: Optional[str] = None, regra: Optional[str] = None):
         """Abre uma posição simulada e registra ENTRADA para cada alavancagem."""
         tp, sl = self._tp_sl(action, entry, tf)
         chave = f"{moeda}_{tf}"
@@ -493,7 +496,7 @@ class CryptoShadowController:
                 antiga.exit_price = entry
                 antiga.motivo_saida = "nova_entrada"
             self._finalizar_estudo(antiga)
-        pos = SimPosition(moeda, tf, action, entry, tp, sl, cruzamento, grade)
+        pos = SimPosition(moeda, tf, action, entry, tp, sl, cruzamento, grade, regra)
         if self.estudo_ativa:
             pos.observa_ate = pos.aberta_em + timedelta(
                 minutes=self._janela_estudo_min(tf))
@@ -612,6 +615,7 @@ class CryptoShadowController:
                 "janela_min": janela_min,
                 "cruzamento": pos.cruzamento,
                 "catalyst_grade": pos.grade,   # A/B/C do catalisador (ou None)
+                "catalyst_regra": pos.regra,   # regra que liberou (R2/R4/... /legado)
                 # Excursão da JANELA COMPLETA (o que importa p/ calibrar TP e SL):
                 "mfe_pct": mfe_pct,          # correu A FAVOR no melhor momento (%)
                 "dd_pct": dd_pct,            # correu CONTRA no pior momento — MAE (%)
@@ -763,7 +767,7 @@ class CryptoShadowController:
             n = cruzamento or 1
             if entry and entry > 0:
                 self._abrir_simulacao(moeda, tf, action, entry, n, sinal_txt, rsi,
-                                      det_gate.get("grade"))
+                                      det_gate.get("grade"), det_gate.get("regra"))
             else:
                 crypto_logger.registrar("ENTRADA", {
                     "moeda": moeda, "timeframe": tf, "alavancagem": None,
@@ -806,7 +810,7 @@ class CryptoShadowController:
                             "analise": True, "cruzamento": n,
                             "detalhe": det_gate}
                 self._abrir_simulacao(moeda, tf, action, entry, n, sinal_txt, rsi,
-                                      det_gate.get("grade"))
+                                      det_gate.get("grade"), det_gate.get("regra"))
                 self._engine(moeda, tf).confirmar_entrada(moeda)
             return {"ok": True, "decisao": hipotese, "analise": True,
                     "cruzamento": n, "motivo": decisao.get("motivo")}
