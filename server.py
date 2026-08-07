@@ -473,19 +473,27 @@ def confirm_bsdet_estado(moeda: str, tf: str = None):
     return jsonify(res), (200 if res.get("ok") else 400)
 
 
+@app.route("/catalyst", methods=["POST"])
+@app.route("/azul/catalyst", methods=["POST"])
 @app.route("/catalyst/<moeda>", methods=["POST"])
+@app.route("/azul/catalyst/<moeda>", methods=["POST"])
 @app.route("/est-rsi/catalyst/<moeda>", methods=["POST"])
-def catalyst_estado(moeda: str):
-    """Estado do CATALISADOR (indicador MNQ Catalyst) de UMA moeda.
+def catalyst_estado(moeda: str = None):
+    """Estado do CATALISADOR (indicador MNQ Catalyst).
     Mensagem esperada (JSON): {"c5m":"BULL","c15m":"NEUT","c1h":"BEAR","vwap":"BULL"}.
+    A MOEDA pode vir de dois jeitos:
+      • na URL   -> /catalyst/BTC  (um alerta por moeda)
+      • no JSON  -> /catalyst  com {"moeda":"{{ticker}}", "c5m":...}  (UM alerta
+                    universal que funciona em QUALQUER gráfico/moeda)
     Aceita BULL/BEAR/NEUT (e apelidos up/down/buy/sell/green/red/above/below).
-    1 alerta por MOEDA (o indicador já calcula 5m/15m/1h internamente)."""
+    Funciona para qualquer moeda (não só as 10 monitoradas)."""
     if not ACEITAR_WEBHOOKS:
         return jsonify({"ok": True, "decisao": "ignorado",
                         "motivo": "MODO AUTÔNOMO: webhooks desativados."}), 200
     data = _parse_payload() or {}
     res = controller.atualizar_catalyst(moeda, data)
-    _record_event(moeda.upper(), "catalyst", {
+    rotulo = (res.get("moeda") or moeda or "?")
+    _record_event(str(rotulo).upper(), "catalyst", {
         "ok": res.get("ok"), "estado": res.get("estado"), "erro": res.get("error"),
     })
     return jsonify(res), (200 if res.get("ok") else 400)

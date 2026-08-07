@@ -176,5 +176,25 @@ class TestAtualizar(unittest.TestCase):
         self.assertEqual(st["vwap"], "BEAR")
 
 
+class TestNormalizarMoeda(unittest.TestCase):
+    def test_perp_com_corretora(self):
+        self.assertEqual(CatalystStore.normalizar_moeda("BITGET:BTCUSDT.P"), "BTC")
+
+    def test_usdt_simples(self):
+        self.assertEqual(CatalystStore.normalizar_moeda("ETHUSDT"), "ETH")
+
+    def test_ja_base(self):
+        self.assertEqual(CatalystStore.normalizar_moeda("SOL"), "SOL")
+
+    def test_usdc(self):
+        self.assertEqual(CatalystStore.normalizar_moeda("APTUSDC"), "APT")
+
+    def test_minusculo(self):
+        self.assertEqual(CatalystStore.normalizar_moeda("virtualusdt"), "VIRTUAL")
+
+    def test_vazio(self):
+        self.assertEqual(CatalystStore.normalizar_moeda(""), "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

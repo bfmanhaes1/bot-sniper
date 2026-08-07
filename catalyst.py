@@ -83,6 +83,25 @@ class CatalystStore:
     def _chave(moeda: str) -> str:
         return (moeda or "").upper()
 
+    @staticmethod
+    def normalizar_moeda(sym: Any) -> str:
+        """Converte o símbolo do TradingView na MOEDA base.
+        Ex.: 'BITGET:BTCUSDT.P' -> 'BTC', 'ETHUSDT' -> 'ETH', 'SOL' -> 'SOL'.
+        Assim o MESMO alerta funciona em QUALQUER moeda: o indicador manda o
+        próprio ticker ({{ticker}}/syminfo.ticker) e o bot descobre a moeda."""
+        s = str(sym if sym is not None else "").strip().upper()
+        if not s:
+            return ""
+        if ":" in s:            # remove prefixo de corretora "BITGET:..."
+            s = s.split(":")[-1]
+        s = s.split(".")[0]     # remove sufixo de perpétuo ".P" / ".PS"
+        s = s.replace("PERP", "")
+        for suf in ("USDT", "USDC", "USD", "BUSD"):   # remove a moeda de cotação
+            if s.endswith(suf) and len(s) > len(suf):
+                s = s[:-len(suf)]
+                break
+        return s.strip()
+
     def atualizar(self, moeda: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Registra o estado atual do catalisador para uma MOEDA.

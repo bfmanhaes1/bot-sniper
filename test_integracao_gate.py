@@ -64,9 +64,24 @@ check("/diag traz bloco catalyst", dj.get("catalyst") is not None
 ok, det = ctrl.catalyst.checar("SOL", "buy")
 check("SOL sem estado -> legado (entra, fail-open)", ok and det.get("regra") == "legado")
 
-# 9) moeda não monitorada é rejeitada
-r = client.post("/catalyst/DOGE", json={"c5m": "BULL"})
-check("moeda não monitorada (DOGE) -> erro", r.get_json().get("ok") is False)
+# 9) endpoint GENÉRICO /catalyst com a moeda no JSON (ticker do TradingView)
+r = client.post("/catalyst",
+                json={"moeda": "BITGET:LINKUSDT.P", "c5m": "BULL",
+                      "c15m": "BULL", "c1h": "BULL", "vwap": "BULL"})
+j = r.get_json()
+check("POST /catalyst (moeda no JSON) -> normaliza LINK",
+      r.status_code == 200 and j.get("ok") and j.get("moeda") == "LINK")
+ok, det = ctrl.catalyst.checar("LINK", "buy")
+check("checar BUY LINK passa (recebido via endpoint genérico)", ok)
+
+# 10) moeda FORA das 10 é aceita (usuário pode olhar outras moedas)
+r = client.post("/catalyst", json={"ticker": "DOGEUSDT", "c5m": "BULL",
+                                    "c15m": "BULL", "c1h": "BULL", "vwap": "BULL"})
+check("moeda fora das 10 (DOGE) é aceita", r.get_json().get("ok") is True)
+
+# 11) payload sem moeda nenhuma -> erro claro
+r = client.post("/catalyst", json={"c5m": "BULL"})
+check("payload sem moeda -> erro", r.get_json().get("ok") is False)
 
 print()
 if falhas:

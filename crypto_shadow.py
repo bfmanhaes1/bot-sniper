@@ -254,11 +254,20 @@ class CryptoShadowController:
         Recebe o estado do CATALISADOR de UMA moeda (indicador MNQ Catalyst) vindo
         de um webhook do TradingView e guarda no CatalystStore.
         `data` ex.: {"c5m":"BULL","c15m":"NEUT","c1h":"BEAR","vwap":"BULL"}.
+        A moeda pode vir na URL (/catalyst/BTC) OU dentro do JSON no campo
+        "moeda"/"ticker"/"symbol" (endpoint genérico /catalyst). Aceita QUALQUER
+        moeda — não fica restrita às 10 monitoradas — para você acompanhar o
+        catalisador de qualquer par que estiver olhando.
         """
-        moeda = (moeda or "").upper()
-        if moeda not in [m.upper() for m in self.moedas]:
-            return {"ok": False, "error": f"moeda '{moeda}' não monitorada"}
-        return self.catalyst.atualizar(moeda, data)
+        data = data or {}
+        bruto = (moeda or data.get("moeda") or data.get("ticker")
+                 or data.get("symbol") or "")
+        coin = self.catalyst.normalizar_moeda(bruto)
+        if not coin:
+            return {"ok": False,
+                    "error": "moeda ausente (informe na URL ou no campo "
+                             "'moeda'/'ticker' do JSON)"}
+        return self.catalyst.atualizar(coin, data)
 
     def _checar_gates(self, moeda: str, tf: str, action: str) -> Tuple[bool, Dict[str, Any]]:
         """
