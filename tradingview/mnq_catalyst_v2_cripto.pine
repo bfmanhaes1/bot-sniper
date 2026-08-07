@@ -1,0 +1,153 @@
+// =====================================================================
+//  MNQ CATALYST V2 — versao CRIPTO (Bot SNIPER)
+// =====================================================================
+//  O QUE E
+//  -------
+//  Porta para CRIPTO o "MNQ Catalyst V2 FEED 9 CAMPOS". E a camada
+//  CATALISADORA (gate) do Bot SNIPER: le varios timeframes internos
+//  (30s / 1m / 5m / 15m / 1h), o VWAP, o REGIME de mercado (lateral x
+//  direcional) e o PULLBACK, e manda tudo num JSON por MOEDA para o bot.
+//  O bot aplica as MESMAS 9 regras do MNQ + as 3 regras novas da V2
+//  (ranging / pullback / timing 30s-1m) e decide ENTRA ou ESPERA.
+//
+//  DIFERENCAS PARA A VERSAO MNQ (de proposito):
+//   - SEM filtros de horario / sessao / noticias  (cripto e 24/7).
+//   - SEM contexto de indices (MNQ/MES/MYM)        (nao existe em cripto).
+//   - Manda o proprio ticker => 1 alerta serve para QUALQUER moeda.
+//
+//  COMO USAR
+//   1) Adicione este indicador no grafico da moeda (qualquer TF; o 5m e
+//      um bom "grafico-base", mas os TFs internos sao lidos via security).
+//   2) Crie 1 alerta:
+//        Condicao   = "MNQ Catalyst V2 CRIPTO" -> "Any alert() function call"
+//        Disparo    = "Once Per Bar Close"
+//        Webhook    = https://web-production-77454.up.railway.app/catalyst
+//      A mensagem sai pronta (JSON com a moeda). O endpoint /catalyst
+//      descobre a moeda pelo campo "moeda" do proprio JSON.
+//   3) Repita para cada moeda (mesmo indicador, so troca o grafico).
+//
+//  Todos os comentarios em Portugues.
+// =====================================================================
+
+//@version=5
+indicator("MNQ Catalyst V2 — CRIPTO (SNIPER)", overlay=true)
+
+// ---------------------------------------------------------------------
+//  ENTRADAS (calibraveis)
+// ---------------------------------------------------------------------
+emaLen      = input.int(50,  "EMA de tendencia",  minval=5)
+rsiLen      = input.int(14,  "RSI periodo",       minval=2)
+rsiMaLen    = input.int(14,  "Media do RSI",      minval=2)
+rangingMult = input.float(0.5, "Ranging: EMA20-EMA50 < ATR x", minval=0.1, step=0.1,
+     tooltip="Mercado e LATERAL (RANGING) quando a distancia entre EMA20 e EMA50 (no 5m) e menor que ATR x este fator.")
+usarVwap    = input.bool(true, "Usar VWAP no feed")
+
+// ---------------------------------------------------------------------
+//  MOTOR DE TENDENCIA (roda dentro de cada timeframe via security)
+//  Devolve: 1 = BULL, -1 = BEAR, 0 = NEUT
+//  Criterio (igual ao MNQ): preco vs EMA50 + RSI vs sua media + RSI vs 50
+// ---------------------------------------------------------------------
+f_trend() =>
+    e50 = ta.ema(close, emaLen)
+    r   = ta.rsi(close, rsiLen)
+    rm  = ta.sma(r, rsiMaLen)
+    bull = close > e50 and r > rm and r > 50
+    bear = close < e50 and r < rm and r < 50
+    bull ? 1 : bear ? -1 : 0
+
+// Estado de cada timeframe interno (lookahead OFF = sem repintar).
+s30 = request.security(syminfo.tickerid, "30S", f_trend(), lookahead=barmerge.lookahead_off)
+s1  = request.security(syminfo.tickerid, "1",   f_trend(), lookahead=barmerge.lookahead_off)
+s5  = request.security(syminfo.tickerid, "5",   f_trend(), lookahead=barmerge.lookahead_off)
+s15 = request.security(syminfo.tickerid, "15",  f_trend(), lookahead=barmerge.lookahead_off)
+s60 = request.security(syminfo.tickerid, "60",  f_trend(), lookahead=barmerge.lookahead_off)
+
+// ---------------------------------------------------------------------
+//  VWAP (do grafico atual). BULL se preco acima, BEAR se abaixo.
+// ---------------------------------------------------------------------
+vw      = ta.vwap(hlc3)
+vwState = not usarVwap ? 0 : (close > vw ? 1 : close < vw ? -1 : 0)
+
+// ---------------------------------------------------------------------
+//  REGIME DE MERCADO (RANGING x TRENDING) — medido no 5m.
+//  Lateral quando EMA20 e EMA50 estao coladas em relacao ao ATR.
+// ---------------------------------------------------------------------
+f_ranging() =>
+    e20 = ta.ema(close, 20)
+    e50 = ta.ema(close, 50)
+    atr = ta.atr(14)
+    math.abs(e20 - e50) < atr * rangingMult
+isRanging = request.security(syminfo.tickerid, "5", f_ranging(), lookahead=barmerge.lookahead_off)
+
+// ---------------------------------------------------------------------
+//  PULLBACK (recuo dentro da tendencia -> setup de RETOMADA).
+//   BULL: 5m e 15m em ALTA, mas o 1m NAO esta em alta agora (recuou) =>
+//         espera a retomada da alta (compra na correcao).
+//   BEAR: espelho (5m e 15m em BAIXA e 1m nao esta em baixa).
+//   NONE: sem pullback identificado.
+// ---------------------------------------------------------------------
+pbBull = (s5 == 1)  and (s15 == 1)  and (s1 != 1)
+pbBear = (s5 == -1) and (s15 == -1) and (s1 != -1)
+pbState = pbBull ? 1 : pbBear ? -1 : 0
+
+// ---------------------------------------------------------------------
+//  GRADE A/B/C (so quando 5m e 15m estao alinhados) — para medir WR.
+//   A = 5m+15m a favor e 1h a favor    (contexto forte)
+//   B = 5m+15m a favor, 1h neutro       (contexto ok)
+//   C = 5m+15m a favor, 1h contra       (contra-tendencia de 1h)
+//  Obs.: a grade final (em relacao ao SINAL buy/sell) o BOT recalcula;
+//  aqui e so um indicativo visual pelo lado da ALTA.
+// ---------------------------------------------------------------------
+alinhadoAlta  = (s5 == 1)  and (s15 == 1)
+alinhadoBaixa = (s5 == -1) and (s15 == -1)
+gradeVis = alinhadoAlta  ? (s60 == 1 ? "A" : s60 == 0 ? "B" : "C") : alinhadoBaixa ? (s60 == -1 ? "A" : s60 == 0 ? "B" : "C") : "-"
+
+// ---------------------------------------------------------------------
+//  ROTULOS (numero -> texto)
+// ---------------------------------------------------------------------
+f_lbl(x) => x == 1 ? "BULL" : x == -1 ? "BEAR" : "NEUT"
+mktLbl = isRanging ? "RANGING" : "TRENDING"
+pbLbl  = pbState == 1 ? "BULL" : pbState == -1 ? "BEAR" : "NONE"
+
+// ---------------------------------------------------------------------
+//  FEED JSON (9 campos + moeda) para o endpoint /catalyst
+// ---------------------------------------------------------------------
+fc = '{"moeda":"' + syminfo.ticker + '"' +
+     ',"c30s":"' + f_lbl(s30) + '"' +
+     ',"c1m":"'  + f_lbl(s1)  + '"' +
+     ',"c5m":"'  + f_lbl(s5)  + '"' +
+     ',"c15m":"' + f_lbl(s15) + '"' +
+     ',"c1h":"'  + f_lbl(s60) + '"' +
+     ',"vwap":"' + f_lbl(vwState) + '"' +
+     ',"market":"' + mktLbl + '"' +
+     ',"pullback":"' + pbLbl + '"' +
+     ',"grade":"' + gradeVis + '"}'
+
+// Dispara 1 vez por fechamento de barra (o alerta usa "Any alert() call").
+if barstate.isconfirmed
+    alert(fc, alert.freq_once_per_bar_close)
+
+// ---------------------------------------------------------------------
+//  PAINEL VISUAL (canto superior direito) — so para conferencia
+// ---------------------------------------------------------------------
+var table pnl = table.new(position.top_right, 2, 9, border_width=1)
+f_cor(x) => x == 1 ? color.new(color.green, 0) : x == -1 ? color.new(color.red, 0) : color.new(color.gray, 0)
+if barstate.islast
+    table.cell(pnl, 0, 0, "CATALYST V2", text_color=color.white, bgcolor=color.new(color.blue, 0))
+    table.cell(pnl, 1, 0, syminfo.ticker, text_color=color.white, bgcolor=color.new(color.blue, 0))
+    table.cell(pnl, 0, 1, "30s", text_color=color.white)
+    table.cell(pnl, 1, 1, f_lbl(s30), bgcolor=f_cor(s30), text_color=color.white)
+    table.cell(pnl, 0, 2, "1m",  text_color=color.white)
+    table.cell(pnl, 1, 2, f_lbl(s1),  bgcolor=f_cor(s1),  text_color=color.white)
+    table.cell(pnl, 0, 3, "5m",  text_color=color.white)
+    table.cell(pnl, 1, 3, f_lbl(s5),  bgcolor=f_cor(s5),  text_color=color.white)
+    table.cell(pnl, 0, 4, "15m", text_color=color.white)
+    table.cell(pnl, 1, 4, f_lbl(s15), bgcolor=f_cor(s15), text_color=color.white)
+    table.cell(pnl, 0, 5, "1h",  text_color=color.white)
+    table.cell(pnl, 1, 5, f_lbl(s60), bgcolor=f_cor(s60), text_color=color.white)
+    table.cell(pnl, 0, 6, "VWAP", text_color=color.white)
+    table.cell(pnl, 1, 6, f_lbl(vwState), bgcolor=f_cor(vwState), text_color=color.white)
+    table.cell(pnl, 0, 7, "MKT", text_color=color.white)
+    table.cell(pnl, 1, 7, mktLbl, bgcolor=(isRanging ? color.new(color.orange, 0) : color.new(color.teal, 0)), text_color=color.white)
+    table.cell(pnl, 0, 8, "PB/GR", text_color=color.white)
+    table.cell(pnl, 1, 8, pbLbl + " " + gradeVis, bgcolor=f_cor(pbState), text_color=color.white)

@@ -129,6 +129,111 @@ class TestRegras(unittest.TestCase):
         self.assertTrue(ok); self.assertEqual(det["regra"], "R4")
 
 
+class TestV2Regras(unittest.TestCase):
+    """Regras NOVAS da V2: RANGING, pullback, timing 30s/1m e grade A/B/C."""
+
+    def test_ranging_descarta(self):
+        s = store()
+        # entrada que seria R4 (tudo alinhado), mas mercado lateral -> descarta
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BULL",
+                            "vwap": "BULL", "market": "RANGING"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertFalse(ok); self.assertEqual(det["regra"], "RANGING")
+
+    def test_ranging_desligado_entra(self):
+        s = store(bloquear_ranging=False)
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BULL",
+                            "vwap": "BULL", "market": "RANGING"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R4")
+
+    def test_pullback_contra_cancela(self):
+        s = store()
+        # base R2 (5m+15m favor), mas pullback BEAR num sinal buy -> reversão
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT", "pullback": "BEAR"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertFalse(ok); self.assertEqual(det["regra"], "PB-contra")
+
+    def test_pullback_favor_entra(self):
+        s = store()
+        # pullback BULL (retomada) a favor do buy -> passa (regra base R2)
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT", "pullback": "BULL"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
+
+    def test_pullback_desligado_entra(self):
+        s = store(pullback_ativo=False)
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT", "pullback": "BEAR"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
+
+    def test_timing_ambos_contra_espera(self):
+        s = store()
+        # base R2 liberaria, mas 30s e 1m ambos CONTRA (BEAR num buy) -> timing ruim
+        s.atualizar("BTC", {"c30s": "BEAR", "c1m": "BEAR",
+                            "c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertFalse(ok); self.assertEqual(det["regra"], "timing")
+
+    def test_timing_so_um_contra_entra(self):
+        s = store()
+        # só o 30s contra, 1m neutro -> NÃO bloqueia por timing
+        s.atualizar("BTC", {"c30s": "BEAR", "c1m": "NEUT",
+                            "c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
+
+    def test_timing_desligado_entra(self):
+        s = store(timing_rapido=False)
+        s.atualizar("BTC", {"c30s": "BEAR", "c1m": "BEAR",
+                            "c5m": "BULL", "c15m": "BULL", "c1h": "BEAR",
+                            "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["regra"], "R2")
+
+    def test_grade_A(self):
+        s = store()
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BULL", "vwap": "BULL"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["grade"], "A")
+
+    def test_grade_B(self):
+        s = store()
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "NEUT", "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["grade"], "B")
+
+    def test_grade_C(self):
+        s = store()
+        # 5m+15m favor, 1h contra -> grade C (base R2 entra)
+        s.atualizar("BTC", {"c5m": "BULL", "c15m": "BULL", "c1h": "BEAR", "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertTrue(ok); self.assertEqual(det["grade"], "C")
+
+    def test_grade_none_fora_do_arranjo(self):
+        s = store()
+        # 5m neutro -> não há alinhamento 5m+15m -> grade None
+        s.atualizar("BTC", {"c5m": "NEUT", "c15m": "BULL", "c1h": "BULL", "vwap": "NEUT"})
+        ok, det = s.checar("BTC", "buy")
+        self.assertIsNone(det["grade"])
+
+    def test_market_pullback_no_snapshot_e_atualizar(self):
+        s = store()
+        r = s.atualizar("BTC", {"c5m": "BULL", "market": "ranging", "pullback": "bull"})
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["estado"]["market"], "RANGING")
+        self.assertEqual(r["estado"]["pullback"], "BULL")
+        snap = s.snapshot()
+        self.assertTrue(snap["bloquear_ranging"])
+        self.assertTrue(snap["pullback_ativo"])
+        self.assertTrue(snap["timing_rapido"])
+
+
 class TestFrescorLegado(unittest.TestCase):
     def test_sem_estado_legado_entra(self):
         s = store()
