@@ -94,19 +94,25 @@
     }
   },
   "confirmacao": {
-    "_comentario": "CAMADA DE CONFIRMACAO (gate) por MOEDA+TIMEFRAME — modelo do 'bot verde' do MNQ. Quando o sinal do Sniper (rosa x azul) chega e ja passou pelo RSI, o bot SO entra se as cores dos indicadores fechados baterem com a regra. Caso contrario NAO entra (registra BLOQUEADO em modo sombra). As cores chegam por webhook: BOKK (TSTS Core) e histograma+plot1/2/3 (TSTS BS Detector via helper).",
-    "ativa": true,
-    "_comentario_ativa": "true = gate LIGADO (soma-se ao Sniper+RSI). ATENCAO: enquanto os alertas de BOKK e BS Detector nao estiverem configurados no TradingView para uma combinacao, aquela combinacao NAO entra (fail-closed). Coloque false para voltar ao comportamento antigo (so Sniper+RSI) durante a montagem dos alertas.",
+    "_comentario": "DESLIGADO. Este era o gate de CORES (BOKK + BS Detector histograma/plot1/2/3). Foi substituido pelo CATALISADOR (bloco 'catalyst' abaixo). Nao apagamos o codigo (confirmacao.py continua no repo), so deixamos ativa=false. Se um dia quiser voltar ao gate de cores, coloque ativa=true.",
+    "ativa": false,
     "bokk_tolerancia_velas": 3,
-    "_comentario_bokk_tol": "Aceita a mudanca de cor do BOKK ate N velas ANTES do sinal e ainda valida (frescor). 0 = ignora o frescor (basta a cor atual estar certa).",
     "exigir": {
       "bokk": "mesma",
       "histograma": "oposta",
       "plot1": "mesma",
       "plot2": "mesma",
       "plot3": "mesma"
-    },
-    "_comentario_exigir": "Para cada componente: 'mesma' = cor igual a direcao do trade (COMPRA=verde / VENDA=vermelho); 'oposta' = cor invertida. Regra do usuario -> COMPRA: BOKK verde, histograma VERMELHO, plot1/2/3 verdes. VENDA e o espelho. Se a convencao do seu histograma for diferente, troque 'oposta' por 'mesma' aqui."
+    }
+  },
+  "catalyst": {
+    "_comentario": "CAMADA CATALISADORA (gate) por MOEDA — o MESMO catalisador multi-timeframe do MNQ (indicador 'MNQ Catalyst - Ultimate Pro B Right'). Fluxo do SNIPER: sinal do Sniper (rosa x azul) -> RSI confirma -> CATALISADOR decide ENTRA ou ESPERA. Filtro PURO (nao dimensiona ordem; em modo sombra a entrada simulada e sempre fixa). O indicador manda por MOEDA um JSON {\"c5m\":\"BULL/BEAR/NEUT\",\"c15m\":\"...\",\"c1h\":\"...\",\"vwap\":\"...\"} para /catalyst/<MOEDA>.",
+    "ativa": true,
+    "_comentario_ativa": "true = catalisador LIGADO (soma-se ao Sniper+RSI). false = volta ao comportamento so Sniper+RSI.",
+    "stale_segundos": 900,
+    "_comentario_stale": "Se o ultimo estado do catalisador da moeda for mais velho que isto (900s = 15min) OU nunca tiver chegado, o filtro NAO opina: deixa passar como LEGADO (entra). Assim voce liga as moedas uma a uma sem travar as que ainda nao tem alerta.",
+    "fail_closed": false,
+    "_comentario_fail_closed": "false = sem estado fresco -> ENTRA (legado, igual MNQ). true = sem estado fresco -> BLOQUEIA (so entra com catalisador confirmando). Deixe false durante a montagem dos alertas."
   },
   "engine": {
     "require_fresh_cross_bars": 3,

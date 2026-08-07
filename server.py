@@ -294,6 +294,7 @@ def diag():
             "entradas_simuladas": controller.contador_entradas_sim,
         },
         "confirmacao": controller.confirm.snapshot() if getattr(controller, "confirm", None) else None,
+        "catalyst": controller.catalyst.snapshot() if getattr(controller, "catalyst", None) else None,
         "dias_com_registro": crypto_logger.dias_disponiveis()[:10],
         "total_webhooks_recebidos": len(_recent_events),
         "ultimos_eventos": eventos,
@@ -468,6 +469,24 @@ def confirm_bsdet_estado(moeda: str, tf: str = None):
     _record_event(moeda.upper(), "confirm_bsdet_estado", {
         "tf": str(data.get("timeframe") or ""), "ok": res.get("ok"),
         "aplicados": res.get("aplicados"), "erro": res.get("error"),
+    })
+    return jsonify(res), (200 if res.get("ok") else 400)
+
+
+@app.route("/catalyst/<moeda>", methods=["POST"])
+@app.route("/est-rsi/catalyst/<moeda>", methods=["POST"])
+def catalyst_estado(moeda: str):
+    """Estado do CATALISADOR (indicador MNQ Catalyst) de UMA moeda.
+    Mensagem esperada (JSON): {"c5m":"BULL","c15m":"NEUT","c1h":"BEAR","vwap":"BULL"}.
+    Aceita BULL/BEAR/NEUT (e apelidos up/down/buy/sell/green/red/above/below).
+    1 alerta por MOEDA (o indicador já calcula 5m/15m/1h internamente)."""
+    if not ACEITAR_WEBHOOKS:
+        return jsonify({"ok": True, "decisao": "ignorado",
+                        "motivo": "MODO AUTÔNOMO: webhooks desativados."}), 200
+    data = _parse_payload() or {}
+    res = controller.atualizar_catalyst(moeda, data)
+    _record_event(moeda.upper(), "catalyst", {
+        "ok": res.get("ok"), "estado": res.get("estado"), "erro": res.get("error"),
     })
     return jsonify(res), (200 if res.get("ok") else 400)
 

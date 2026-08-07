@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Teste de integração do gate via Flask test_client + fluxo _processar_decisao.
-Roda com: python3 test_integracao_gate.py"""
+"""Teste de integração do GATE do CATALISADOR via Flask test_client + _processar_decisao.
+Gate atual = Sniper (rosa x azul) + RSI + CATALISADOR (por moeda).
+O gate antigo de cores (BOKK/BS Detector) está DESLIGADO por config (confirmacao.ativa=false),
+mas os endpoints continuam existindo (compat). Roda com: python3 test_integracao_gate.py"""
 import json
 import server
 
@@ -14,57 +16,56 @@ app = server.app
 ctrl = server.controller
 client = app.test_client()
 
-# 1) Webhook BOKK verde para BTC 5m
-r = client.post("/verde/bokk/BTC/5m", json={"signal": "green"})
-check("POST /verde/bokk/BTC/5m -> 200 ok", r.status_code == 200 and r.get_json().get("ok"))
+# 1) Webhook do catalisador para BTC: tudo BULL (alinhado) -> BUY deve ENTRAR
+r = client.post("/catalyst/BTC",
+                json={"c5m": "BULL", "c15m": "BULL", "c1h": "BULL", "vwap": "BULL"})
+check("POST /catalyst/BTC -> 200 ok", r.status_code == 200 and r.get_json().get("ok"))
 
-# 2) Webhook estado consolidado BS Detector (hist vermelho, plots verdes)
-r = client.post("/bsdet/estado/BTC/5m",
-                json={"hist": "red", "p1": "green", "p2": "green", "p3": "green"})
-j = r.get_json()
-check("POST /bsdet/estado/BTC/5m -> aplica 4 componentes",
-      r.status_code == 200 and j.get("ok") and len(j.get("aplicados", {})) == 4)
+# 2) Snapshot do catalisador mostra o estado da moeda
+snap = ctrl.catalyst.snapshot()
+check("snapshot do catalyst tem BTC", "BTC" in snap.get("estado", {}))
 
-# 3) Snapshot mostra o estado
-snap = ctrl.confirm.snapshot()
-check("snapshot tem combinação BTC_5m", "BTC_5m" in snap.get("estado", {}))
+# 3) checar direto: BUY BTC deve passar (tudo BULL)
+ok, det = ctrl.catalyst.checar("BTC", "buy")
+check("checar BUY BTC passa (tudo BULL)", ok)
 
-# 4) checar direto: BUY deve passar (tudo alinhado)
-ok, det = ctrl.confirm.checar("BTC", "5m", "buy", 5.0)
-check("checar BUY BTC 5m passa (alinhado)", ok)
+# 4) Webhook do catalisador para ETH: tudo BEAR -> BUY deve BLOQUEAR (contra a alta)
+r = client.post("/catalyst/ETH",
+                json={"c5m": "BEAR", "c15m": "BEAR", "c1h": "BEAR", "vwap": "BEAR"})
+check("POST /catalyst/ETH -> 200 ok", r.status_code == 200 and r.get_json().get("ok"))
+ok, det = ctrl.catalyst.checar("ETH", "buy")
+check("checar BUY ETH bloqueia (tudo BEAR)", not ok)
 
-# 5) _processar_decisao com entrar=True e gate BLOQUEADO (moeda sem cores)
-#    ETH 5m não recebeu nenhuma cor -> fail-closed deve bloquear
+# 5) _processar_decisao com entrar=True e gate BLOQUEADO (ETH BUY contra a alta)
+#    o motor JÁ registrou a trava de posição -> ao bloquear ela deve ser liberada
 eng = ctrl._engine("ETH", "5m")
 eng._registrar_posicao(eng._get("ETH"), "buy")  # simula a trava que o motor põe
 res = ctrl._processar_decisao(
     "ETH", "5m", "buy", "TSTS", 55.0, 50.0, 3000.0,
     {"entrar": True, "cruzamento": 1, "motivo": "teste"}, "teste")
-check("gate BLOQUEIA entrada ETH 5m sem cores (fail-closed)",
-      res.get("decisao") == "bloqueado_confirmacao")
-# a trava deve ter sido liberada
+check("gate BLOQUEIA entrada ETH 5m (catalisador contra)",
+      res.get("decisao") == "bloqueado_catalisador")
 check("trava de posição liberada após bloqueio",
       eng._get("ETH").posicao_aberta is False)
 
-# 6) _processar_decisao com entrar=True e gate LIBERADO (BTC 5m alinhado)
+# 6) _processar_decisao com entrar=True e gate LIBERADO (BTC BUY tudo BULL)
 res = ctrl._processar_decisao(
     "BTC", "5m", "buy", "TSTS", 55.0, 50.0, 60000.0,
     {"entrar": True, "cruzamento": 1, "motivo": "teste"}, "teste")
-check("gate LIBERA entrada BTC 5m alinhado", res.get("decisao") == "entrar")
+check("gate LIBERA entrada BTC 5m (catalisador a favor)", res.get("decisao") == "entrar")
 
-# 7) endpoint /diag traz o bloco confirmacao
+# 7) endpoint /diag traz o bloco catalyst
 r = client.get("/diag")
 dj = r.get_json()
-check("/diag traz bloco confirmacao", dj.get("confirmacao") is not None
-      and dj["confirmacao"].get("ativa") is True)
+check("/diag traz bloco catalyst", dj.get("catalyst") is not None
+      and dj["catalyst"].get("ativa") is True)
 
-# 8) componente individual (compat v3)
-r = client.post("/bsdet/hist/SOL/1m", json={"signal": "red"})
-check("POST /bsdet/hist/SOL/1m -> 200 ok (compat v3)",
-      r.status_code == 200 and r.get_json().get("ok"))
+# 8) moeda sem estado do catalisador -> fail-open (legado): BUY passa
+ok, det = ctrl.catalyst.checar("SOL", "buy")
+check("SOL sem estado -> legado (entra, fail-open)", ok and det.get("regra") == "legado")
 
 # 9) moeda não monitorada é rejeitada
-r = client.post("/verde/bokk/DOGE/5m", json={"signal": "green"})
+r = client.post("/catalyst/DOGE", json={"c5m": "BULL"})
 check("moeda não monitorada (DOGE) -> erro", r.get_json().get("ok") is False)
 
 print()

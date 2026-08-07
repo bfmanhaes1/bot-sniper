@@ -33,6 +33,7 @@ import requests
 import crypto_logger
 from engine import DecisionEngine
 from confirmacao import ConfirmStore
+from catalyst import CatalystStore
 
 logger = logging.getLogger("crypto_shadow")
 
@@ -205,10 +206,14 @@ class CryptoShadowController:
         self._dedup_seg: float = float(config.get("dedup_sinal_segundos", 90))
         self._ultimo_sinal: Dict[str, float] = {}  # "MOEDA_TF_ACAO" -> epoch
 
-        # Camada de CONFIRMAÇÃO (gate) por moeda+TF — modelo do "bot verde" MNQ.
-        # Guarda a cor atual de BOKK / histograma / plot1/2/3 e só libera a
-        # entrada quando todas baterem com a regra (config "confirmacao").
+        # Camada de CONFIRMAÇÃO (gate de CORES) — DESLIGADA por config (ativa=false).
+        # Mantida no repo caso o usuário queira voltar ao modelo BOKK/BS Detector.
         self.confirm = ConfirmStore(config)
+
+        # Camada CATALISADORA (gate atual) por MOEDA — o mesmo catalisador
+        # multi-timeframe do MNQ. Fluxo: Sniper + RSI -> catalisador decide
+        # ENTRA/ESPERA. Filtro puro (config "catalyst").
+        self.catalyst = CatalystStore(config)
 
     # ------------------------------------------------------------------ #
     def atualizar_confirmacao(self, componente: str, moeda: str,
@@ -243,6 +248,39 @@ class CryptoShadowController:
         cores = {k: v for k, v in (data or {}).items()
                  if str(k).lower() not in ("timeframe", "tf", "interval", "moeda", "symbol", "ticker")}
         return self.confirm.atualizar_varios(moeda, tf, cores)
+
+    def atualizar_catalyst(self, moeda: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Recebe o estado do CATALISADOR de UMA moeda (indicador MNQ Catalyst) vindo
+        de um webhook do TradingView e guarda no CatalystStore.
+        `data` ex.: {"c5m":"BULL","c15m":"NEUT","c1h":"BEAR","vwap":"BULL"}.
+        """
+        moeda = (moeda or "").upper()
+        if moeda not in [m.upper() for m in self.moedas]:
+            return {"ok": False, "error": f"moeda '{moeda}' não monitorada"}
+        return self.catalyst.atualizar(moeda, data)
+
+    def _checar_gates(self, moeda: str, tf: str, action: str) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Roda as camadas de gate ATIVAS (confirmação de cores e/ou catalisador).
+        Retorna (ok, detalhe). ok=False => NÃO entra. A primeira camada que
+        bloquear devolve o motivo. Se nenhuma estiver ativa, libera.
+        """
+        # Gate de CORES (BOKK/BS Detector) — só se ativa (hoje desligado).
+        if getattr(self, "confirm", None) and self.confirm.ativa:
+            ok, det = self.confirm.checar(moeda, tf, (action or "").lower(),
+                                          _tf_seg(tf) / 60.0)
+            if not ok:
+                det = dict(det); det["gate"] = "confirmacao"
+                return False, det
+        # Gate CATALISADOR (por moeda) — o filtro atual.
+        if getattr(self, "catalyst", None) and self.catalyst.ativa:
+            ok, det = self.catalyst.checar(moeda, (action or "").lower())
+            if not ok:
+                det = dict(det); det["gate"] = "catalyst"
+                return False, det
+            return True, {**det, "gate": "catalyst"}
+        return True, {"ok": True, "motivo": "sem gate ativo", "gate": None}
 
     # ------------------------------------------------------------------ #
     def _engine(self, moeda: str, tf: str) -> DecisionEngine:
@@ -565,30 +603,31 @@ class CryptoShadowController:
                            direction: str = "") -> Dict[str, Any]:
         cruzamento = decisao.get("cruzamento")
 
-        # 0) GATE DE CONFIRMAÇÃO — modelo "bot verde" MNQ.
-        # O motor já disse "entrar" (Sniper + RSI ok) e JÁ registrou a trava de
-        # posição. Antes de simular a entrada, exigimos que as cores dos
-        # indicadores fechados (BOKK / histograma / plot1/2/3) batam com a regra.
-        # Se NÃO baterem: registra BLOQUEADO, SOLTA a trava (senão o motor acha
-        # que abriu posição e trava a combinação) e NÃO entra.
-        if decisao.get("entrar") and getattr(self, "confirm", None) and self.confirm.ativa:
-            ok_conf, det_conf = self.confirm.checar(
-                moeda, tf, (action or "").lower(), _tf_seg(tf) / 60.0)
-            if not ok_conf:
+        # 0) GATE — Sniper + RSI já disseram "entrar" (e o motor JÁ registrou a
+        # trava de posição). Antes de simular a entrada, o CATALISADOR (por moeda)
+        # precisa dizer ENTRA. Se ele mandar ESPERAR/BLOQUEAR: registra BLOQUEADO,
+        # SOLTA a trava (senão o motor acha que abriu posição e trava a combinação)
+        # e NÃO entra.
+        if decisao.get("entrar"):
+            ok_gate, det_gate = self._checar_gates(moeda, tf, (action or "").lower())
+            if not ok_gate:
                 self._engine(moeda, tf).liberar_posicao(moeda)
                 crypto_logger.registrar("BLOQUEADO", {
                     "moeda": moeda, "timeframe": tf, "alavancagem": None,
                     "sinal_tsts": sinal_txt, "rsi_valor": rsi,
                     "cruzamento_numero": cruzamento or 1,
-                    "decisao_agente": "bloqueado_confirmacao",
+                    "decisao_agente": "bloqueado_catalisador",
                     "direcao": (action or "").lower(),
-                    "motivo": det_conf.get("motivo"),
-                    "confirmacao": det_conf,
+                    "motivo": det_gate.get("motivo"),
+                    "regra": det_gate.get("regra"),
+                    "gate": det_gate.get("gate"),
+                    "catalyst": det_gate,
                 })
-                logger.info("%s %s: entrada BLOQUEADA pela confirmação — %s",
-                            moeda, tf, det_conf.get("motivo"))
-                return {"ok": True, "decisao": "bloqueado_confirmacao",
-                        "cruzamento": cruzamento or 1, "detalhe": det_conf}
+                logger.info("%s %s: entrada BLOQUEADA pelo %s (%s) — %s",
+                            moeda, tf, det_gate.get("gate"),
+                            det_gate.get("regra"), det_gate.get("motivo"))
+                return {"ok": True, "decisao": "bloqueado_catalisador",
+                        "cruzamento": cruzamento or 1, "detalhe": det_gate}
 
         # 1) ENTRADA (automática no lado alinhado ou no cruzamento máximo)
         if decisao.get("entrar"):
@@ -619,23 +658,23 @@ class CryptoShadowController:
             # deixamos o motor seguir até o cruzamento máximo (entrada automática),
             # a menos que a hipótese seja 'entrar' — aí simulamos a entrada também.
             if hipotese == "entrar" and entry and entry > 0:
-                # Também passa pelo gate de confirmação (mesmo no modo análise).
-                if getattr(self, "confirm", None) and self.confirm.ativa:
-                    ok_conf, det_conf = self.confirm.checar(
-                        moeda, tf, (action or "").lower(), _tf_seg(tf) / 60.0)
-                    if not ok_conf:
-                        crypto_logger.registrar("BLOQUEADO", {
-                            "moeda": moeda, "timeframe": tf, "alavancagem": None,
-                            "sinal_tsts": sinal_txt, "rsi_valor": rsi,
-                            "cruzamento_numero": n,
-                            "decisao_agente": "bloqueado_confirmacao",
-                            "direcao": (action or "").lower(),
-                            "motivo": det_conf.get("motivo"),
-                            "confirmacao": det_conf,
-                        })
-                        return {"ok": True, "decisao": "bloqueado_confirmacao",
-                                "analise": True, "cruzamento": n,
-                                "detalhe": det_conf}
+                # Também passa pelo gate (catalisador) mesmo no modo análise.
+                ok_gate, det_gate = self._checar_gates(moeda, tf, (action or "").lower())
+                if not ok_gate:
+                    crypto_logger.registrar("BLOQUEADO", {
+                        "moeda": moeda, "timeframe": tf, "alavancagem": None,
+                        "sinal_tsts": sinal_txt, "rsi_valor": rsi,
+                        "cruzamento_numero": n,
+                        "decisao_agente": "bloqueado_catalisador",
+                        "direcao": (action or "").lower(),
+                        "motivo": det_gate.get("motivo"),
+                        "regra": det_gate.get("regra"),
+                        "gate": det_gate.get("gate"),
+                        "catalyst": det_gate,
+                    })
+                    return {"ok": True, "decisao": "bloqueado_catalisador",
+                            "analise": True, "cruzamento": n,
+                            "detalhe": det_gate}
                 self._abrir_simulacao(moeda, tf, action, entry, n, sinal_txt, rsi)
                 self._engine(moeda, tf).confirmar_entrada(moeda)
             return {"ok": True, "decisao": hipotese, "analise": True,
@@ -817,6 +856,7 @@ class CryptoShadowController:
             "contador_rsi": self.contador_rsi,
             "contador_entradas_sim": self.contador_entradas_sim,
             "confirmacao": self.confirm.snapshot() if getattr(self, "confirm", None) else None,
+            "catalyst": self.catalyst.snapshot() if getattr(self, "catalyst", None) else None,
         }
 
 

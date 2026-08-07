@@ -1,190 +1,180 @@
-# 🎯 Guia — Camada de CONFIRMAÇÃO do Bot SNIPER
+# 🎯 Guia — Gate de CONFIRMAÇÃO do Bot SNIPER (CATALISADOR)
 
-Este guia explica, passo a passo, como ligar a **camada de confirmação** (o
-"gate") no seu Bot SNIPER. É o mesmo modelo do seu "bot verde" do MNQ, agora
-nas 10 moedas de cripto.
+Este guia explica, passo a passo, como ligar o **gate de confirmação** do seu
+Bot SNIPER. Agora o gate usa o **mesmo CATALISADOR** do seu bot do MNQ — o
+indicador **"MNQ Catalyst - Ultimate Pro B Right"** — aplicado às 10 moedas de
+cripto.
+
+> ⚠️ **Mudança importante:** saímos do modelo antigo de **cores** (BOKK + BS
+> Detector). Aquilo dependia de "ler a cor" dos plots, e o TradingView **não
+> deixa** um indicador ler a cor de outro (só o valor). Então trocamos por uma
+> solução que **funciona de verdade**: o **catalisador multi-timeframe**, que
+> você já confia no MNQ. Os endpoints antigos de cor continuam existindo, mas
+> **desligados** — não precisa mexer neles.
 
 ---
 
 ## 1. O que muda no bot (em uma frase)
 
-Antes, o bot entrava com **Sniper + RSI**. Agora ele **soma** uma última
-checagem: quando o sinal do Sniper chega (já confirmado pelo RSI), o bot só
-**ENTRA** se as cores dos indicadores fechados estiverem todas certas. Se
-não estiverem, ele **NÃO entra** e registra o motivo (`BLOQUEADO`).
+O bot entra com **Sniper (rosa × azul) + RSI**, e agora **soma** uma última
+checagem: o **CATALISADOR** da moeda precisa dizer **ENTRA**. Se ele mandar
+**ESPERAR/BLOQUEAR**, o bot **não entra** e registra o motivo (`BLOQUEADO`).
 
-### A regra (COMPRA e VENDA são espelho)
+**O fluxo completo é:**
 
-| Componente | COMPRA (LONG) | VENDA (SHORT) |
-|---|---|---|
-| **BOKK** (TSTS Core) | 🟢 verde | 🔴 vermelho |
-| **Histograma** (BS Detector) | 🔴 vermelho | 🟢 verde |
-| **Plot 1** | 🟢 verde | 🔴 vermelho |
-| **Plot 2** | 🟢 verde | 🔴 vermelho |
-| **Plot 3** | 🟢 verde | 🔴 vermelho |
+```
+Sinal do Sniper (rosa x azul)  ->  RSI confirma  ->  CATALISADOR decide  ->  ENTRA / ESPERA
+```
 
-> ⚠️ **Confirme comigo o Histograma:** deixei o histograma como **oposto**
-> (COMPRA pede histograma **vermelho**). Se na sua convenção a COMPRA pede
-> histograma **verde**, é só avisar que eu troco 1 palavra no config
-> (`"histograma": "oposta"` → `"mesma"`). Todo o resto funciona igual.
-
-O **BOKK aceita tolerância**: ele pode ter mudado de cor até **3 velas
-antes** do sinal e ainda vale (ajustável no config).
+- O catalisador é um **filtro puro**: ele só diz **entra** ou **espera**. Ele
+  **não** muda o tamanho da entrada (em modo sombra a entrada simulada é sempre
+  fixa).
+- Ele funciona **por MOEDA** (não por timeframe). O próprio indicador já olha
+  os tempos **5m, 15m e 1h** por dentro e manda uma leitura só. Ou seja, é
+  **1 alerta por moeda** — e essa leitura vale para os sinais de 1m, 5m e 15m
+  daquela moeda.
 
 ---
 
-## 2. ⚠️ IMPORTANTE antes de começar (fail-closed)
+## 2. Como o catalisador decide (em linguagem simples)
 
-O gate já está **LIGADO** (`"ativa": true`). Enquanto uma combinação
-**moeda + timeframe** ainda **não tiver os alertas de cor configurados**, ela
-**não vai entrar** (o bot bloqueia por falta de dados — isso é de propósito,
-para não entrar "no escuro").
+O indicador manda 4 leituras da moeda: **5m**, **15m**, **1h** e **VWAP**. Cada
+uma pode estar **a favor**, **contra** ou **neutra** em relação ao lado do
+sinal (compra ou venda). A partir disso o bot aplica as **mesmas regras do
+MNQ** para decidir. Resumindo o espírito das regras:
 
-👉 Você tem **duas opções**:
+- **Tudo alinhado a favor** (5m + 15m + 1h, e de preferência o VWAP) → **ENTRA**
+  com força.
+- **5m e 15m a favor** → **ENTRA** (é o caso mais comum).
+- **5m neutro**, mas **15m e 1h a favor** → **ENTRA** (tendência maior manda).
+- **5m e 1h a favor**, 15m neutro → **ENTRA**.
+- **Só o 15m decidiu** (5m e 1h neutros) → segue o 15m: a favor entra, contra
+  bloqueia.
+- **Só o 5m decidiu** (15m e 1h neutros) → segue o 5m: a favor entra, contra
+  bloqueia.
+- **Conflito** (5m de um lado, 1h do outro, 15m neutro) → o **VWAP é o juiz**:
+  entra só se o VWAP estiver do lado do sinal; senão **espera**.
+- **5m e 15m contra o sinal** → **BLOQUEIA**.
+- **Tudo neutro** → **BLOQUEIA** (sem convicção).
 
-- **A) Montar tudo primeiro e depois ligar:** eu deixo `"ativa": false`
-  agora, você configura os alertas com calma, e quando terminar a gente liga.
-- **B) Ligar já (como está):** vale a pena se você for configurar as moedas
-  principais hoje. As que faltarem simplesmente não entram até você terminar.
-
-> Para voltar ao comportamento antigo (só Sniper + RSI) a qualquer momento:
-> troque no `config.json` → `"confirmacao": { "ativa": false }`.
+Você **não precisa decorar** isso — o bot faz sozinho. Está aqui só para você
+entender o "porquê" quando ver um `ENTRA` ou `BLOQUEADO` nos registros.
 
 ---
 
-## 3. Endereço base do bot
+## 3. ⚠️ Antes de começar (fail-open / "legado")
 
-Todos os alertas apontam para o **Bot SNIPER**:
+O gate já está **LIGADO** (`"ativa": true`), mas de um jeito **seguro para a
+montagem**: enquanto uma moeda **ainda não tiver o alerta do catalisador
+configurado** (ou o último alerta estiver **velho**, mais de 15 min), o
+catalisador **não opina** e o bot **entra normal** (só com Sniper + RSI). É o
+chamado **modo legado**, igual ao MNQ.
+
+👉 Na prática: você pode **ligar as moedas uma a uma**, sem travar as que ainda
+não configurou. Assim que o alerta de uma moeda começar a chegar, o catalisador
+passa a filtrar **só aquela** moeda.
+
+> Se algum dia você quiser o contrário — **só entrar com o catalisador
+> confirmando** (bloquear quem não tiver alerta) — é só trocar no `config.json`:
+> `"catalyst": { "fail_closed": true }`.
+>
+> E para **desligar** o catalisador (voltar a Sniper + RSI puro):
+> `"catalyst": { "ativa": false }`.
+
+---
+
+## 4. Endereço base do bot
+
+Todos os alertas do catalisador apontam para o **Bot SNIPER**:
 
 ```
 https://web-production-77454.up.railway.app
 ```
 
-Troque `<MOEDA>` por: **BTC, BNB, ETH, SOL, VIRTUAL, LINK, AVAX, NEAR, APT, BGB**
-Troque `<TF>` por: **1m, 5m ou 15m**
+Cada moeda tem **sua própria URL** (troque só o final):
+
+| Moeda | Webhook URL do catalisador |
+|---|---|
+| BTC | `https://web-production-77454.up.railway.app/catalyst/BTC` |
+| BNB | `https://web-production-77454.up.railway.app/catalyst/BNB` |
+| ETH | `https://web-production-77454.up.railway.app/catalyst/ETH` |
+| SOL | `https://pbs.twimg.com/media/HOXvpUtXoAAJtLM.jpg` |
+| VIRTUAL | `https://crypto-economy.com//wp-content/uploads/2023/03/ethereum-vs-bitcoin-1024x576.jpg` |
+| LINK | `https://1000logos.net/wp-content/uploads/2023/04/Chainlink-Logo-500x281.png` |
+| AVAX | `https://pbs.twimg.com/profile_images/2069411522498244608/qwc_ZZpP_400x400.jpg` |
+| NEAR | `https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/250px-Bitcoin.svg.png?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail` |
+| APT | `https://ledger-wp-website-s3-prd.ledger.com/uploads/2022/11/aptos_round.png` |
+| BGB | `https://img.decrypt.co/insecure/rs:fit:3840:0:0:0/plain/https://cdn.decrypt.co/wp-content/uploads/2025/09/cryptocurrency-world-decrypt-style-gID_7.jpg@webp` |
 
 ---
 
-## 4. Configurar o BOKK (TSTS Core) — 2 alertas por gráfico
+## 5. Criar o alerta do CATALISADOR — 1 por moeda
 
-O BOKK é a mesma ideia do seu MNQ: um alerta **nativo** do indicador manda a
-cor atual. Como o BOKK tem 2 estados (verde/vermelho), são **2 alertas por
-gráfico** (um para cada cor).
+Para cada moeda, faça **uma vez**:
 
-### Alerta 1 — BOKK ficou VERDE
-1. Abra o gráfico da moeda no timeframe desejado.
-2. Clique no indicador **TSTS Core** → **Adicionar alerta** (ou use a
-   condição de "BOKK subindo / cor verde" que você já usa no MNQ).
-3. **Once Per Bar Close**.
-4. Em **Webhook URL**, cole (exemplo BTC 5m):
+1. Abra o gráfico da moeda no TradingView (pode ser qualquer timeframe — o
+   indicador calcula 5m/15m/1h/VWAP por dentro sozinho).
+2. Adicione o indicador **"MNQ Catalyst - Ultimate Pro B Right"** ao gráfico
+   (é o mesmo do MNQ).
+3. Clique no indicador → **Adicionar alerta**.
+4. Em **Condição**, escolha o indicador **"MNQ Catalyst - Ultimate Pro B
+   Right"** e a opção **"Any alert() function call"** (chamada de alerta do
+   próprio indicador — assim ele manda o JSON pronto).
+5. **Once Per Bar Close** (uma vez ao fechar a vela).
+6. Em **Webhook URL**, cole a URL **daquela moeda** (tabela da seção 4).
+   Exemplo para BTC:
    ```
-   https://web-production-77454.up.railway.app/verde/bokk/BTC/5m
+   https://web-production-77454.up.railway.app/catalyst/BTC
    ```
-5. Em **Mensagem**, cole exatamente:
+7. **Mensagem:** deixe a mensagem **padrão do indicador** (ele já envia o JSON
+   com as 4 leituras). Se o campo estiver vazio, use:
+   ```
+   {{alertMessage}}
+   ```
+   O bot espera um JSON assim (o indicador monta sozinho):
    ```json
-   {"signal":"green"}
+   {"c5m":"BULL","c15m":"BULL","c1h":"BEAR","vwap":"BULL"}
    ```
+   (Cada campo pode ser `BULL`, `BEAR` ou `NEUT`. O bot também entende
+   variações como up/down, buy/sell, 1/-1 — não precisa se preocupar com isso.)
+8. Salve. Repita para as outras moedas trocando **só o final da URL**.
 
-### Alerta 2 — BOKK ficou VERMELHO
-Igual ao de cima, **mesma URL**, mudando só a mensagem:
-```json
-{"signal":"red"}
-```
-
-> 💡 É o mesmo padrão das suas fotos do MNQ (`/verde/bokk/MNQ` com
-> `{"signal":"red"}`), só trocando `MNQ` por `<MOEDA>/<TF>`.
+> 💡 São **10 alertas no total** (1 por moeda). Não precisa fazer todos hoje —
+> comece pelas que você mais opera; as demais entram em modo legado até você
+> criar o alerta delas.
 
 ---
 
-## 5. Configurar o BS Detector — 1 alerta por gráfico (helper v4)
+## 6. Como conferir se está funcionando
 
-Para o Histograma + Plot 1/2/3 eu preparei um **helper** que junta tudo em
-**um único alerta** (em vez de 4). O arquivo é:
-`tradingview/bsdet_helper_v4_sniper.pine`.
-
-> **IMPORTANTE — por que o helper mudou.** O Pine (linguagem do TradingView)
-> só lê o **valor** (número) de um plot, **nunca a cor**. O BS Detector pinta
-> os plots com 6 cores por uma lógica **interna fechada**, então não dá para
-> "ler a cor" dele. A solução é por **aproximação**: o helper agora **calcula
-> a cor sozinho, a partir do preço**, usando as mesmas contas do indicador
-> aberto **"Trend Meter (by Lij_MC)"** — que muda de cor lateralmente igual
-> aos plots do BS Detector. Você escolhe a conta de cada componente e vai
-> **calibrando** até o painel do helper ficar igual ao BS Detector.
-
-1. No TradingView, abra **Pine Editor** → cole o conteúdo do arquivo →
-   **Add to chart**.
-2. Deixe no gráfico **os dois**: o **TSTS BS Detector** e o **BSDET HELPER v4**
-   (o BS Detector fica só para você **comparar as cores**).
-3. Nos **inputs** do helper, no grupo **"Regra de cor por componente"**,
-   escolha para cada um (Histograma, Plot 1, Plot 2, Plot 3) **qual conta**
-   usar. As opções são as contas do Trend Meter:
-   - **Fast MACD 8/21/5** — histograma do MACD rápido
-   - **MACD 12/26/9** — histograma do MACD clássico
-   - **RSI 13 > 50** / **RSI 5 > 50**
-   - **Mom/Dad Cross** (Top Dog) / **RSI Signal Cross 13/21** / **MA Cross 5/11**
-   - **Trend Candles** (Heikin-Ashi)
-   - (também há **"Fonte: Positivo"** e **"Fonte: Subindo"** como fallback, se
-     você preferir ligar direto num plot pelo campo "Fonte ... opcional")
-4. **Calibre olhando o painel** (canto superior direito) **contra o BS Detector**:
-   - Troque a conta no menu até a cor de cada componente **bater** com o BS
-     Detector na maior parte do tempo.
-   - Se a cor sair **trocada** (verde onde devia ser vermelho), marque
-     **"inverter cor"** daquele componente.
-   - É **aproximação**: não precisa ficar 100% em toda vela — busque o que mais
-     se aproxima do comportamento do original.
-5. Crie **1 alerta**:
-   - Condição: **BSDET HELPER v4 — SNIPER** → **"estado (JSON)"** (a mensagem
-     já sai pronta; deixe o campo mensagem como `{{strategy.order.alert_message}}`
-     ou apenas confie na mensagem padrão do alerta).
-   - **Once Per Bar Close**.
-   - **Webhook URL** (exemplo BTC 5m):
-     ```
-     https://web-production-77454.up.railway.app/bsdet/estado/BTC/5m
-     ```
-
-> A mensagem que o helper envia é algo como:
-> `{"timeframe":"5m","hist":"red","p1":"green","p2":"green","p3":"green"}`
-
----
-
-## 6. Quantos alertas no total?
-
-Por gráfico (1 moeda + 1 timeframe): **2 (BOKK)** + **1 (BS Detector)** = **3**.
-
-Você **não precisa** fazer as 30 combinações de uma vez. Sugestão: comece
-pelas moedas/timeframes que você mais opera e vá somando. As combinações sem
-alerta simplesmente não entram (fail-closed).
-
----
-
-## 7. Como conferir se está funcionando
-
-Abra no navegador (mostra o estado guardado das cores):
+Abra no navegador (mostra o estado guardado do catalisador):
 ```
 https://web-production-77454.up.railway.app/diag
 ```
-Procure o bloco **`confirmacao`** → `estado`. Cada combinação que já recebeu
-cor aparece ali (ex.: `BTC_5m`) com a cor de cada componente.
+Procure o bloco **`catalyst`** → `estado`. Cada moeda que já recebeu leitura
+aparece ali (ex.: `BTC`) com as 4 leituras (`c5m`, `c15m`, `c1h`, `vwap`) e a
+hora da última atualização.
 
-Quando um sinal for **bloqueado**, ele aparece nos registros do dia como
-evento `BLOQUEADO`, com o **motivo** (ex.: "cor errada: plot2" ou
-"sem dados: histograma, plot1").
+Quando um sinal for **bloqueado** pelo catalisador, ele aparece nos registros
+do dia como evento `BLOQUEADO`, com o **motivo** e a **regra** que decidiu
+(ex.: "5m e 15m alinhados contra o sinal").
 
 ---
 
-## 8. Ajustes rápidos (no `config.json`, bloco `confirmacao`)
+## 7. Ajustes rápidos (no `config.json`, bloco `catalyst`)
 
 | O que quero | O que mudar |
 |---|---|
-| Desligar o gate (voltar a Sniper+RSI) | `"ativa": false` |
-| Mudar a tolerância do BOKK | `"bokk_tolerancia_velas": 3` (0 = ignora) |
-| Histograma deve ser VERDE na compra | `"histograma": "mesma"` |
-| Algum plot deve ser oposto | troque `"mesma"` por `"oposta"` |
+| Desligar o catalisador (voltar a Sniper+RSI) | `"ativa": false` |
+| Só entrar com catalisador confirmando (bloquear quem não tem alerta) | `"fail_closed": true` |
+| Considerar o alerta "velho" com mais/menos tempo | `"stale_segundos": 900` (900 = 15 min) |
 
 ---
 
-## 9. Segurança
+## 8. Segurança
 
-- O bot continua **100% em MODO SOMBRA**: nenhuma ordem real é enviada. A
-  confirmação só decide se a **entrada simulada** acontece ou não.
-- Nada foi mexido no Bot RIFLE nem no bot do MNQ.
+- O bot continua **100% em MODO SOMBRA**: nenhuma ordem real é enviada. O
+  catalisador só decide se a **entrada simulada** acontece ou não.
+- **Nada foi mexido no Bot RIFLE** nem no bot do MNQ.
+- O gate antigo de cores (BOKK/BS Detector) está **desligado**, mas o código e
+  os endpoints continuam no bot (não atrapalham; ficam de reserva).
