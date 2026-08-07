@@ -81,14 +81,16 @@ ESTUDO_TABELA = os.environ.get("ESTUDO_TABELA", "estudo_tpsl")
 _USE_PG = False
 _psycopg2 = None
 _pg_Json = None
+_pg_import_error = None
 if DATABASE_URL:
     try:
         import psycopg2 as _psycopg2  # type: ignore
         from psycopg2.extras import Json as _pg_Json  # type: ignore
         _USE_PG = True
         logger.info("crypto_logger: estudo usará POSTGRES (DATABASE_URL detectada).")
-    except ImportError as _exc:
-        logger.error("crypto_logger: psycopg2 indisponível (%s) — usando JSONL.", _exc)
+    except Exception as _exc:  # noqa: BLE001  (ImportError e outros erros de carga da libpq)
+        _pg_import_error = "%s: %s" % (type(_exc).__name__, _exc)
+        logger.error("crypto_logger: psycopg2 indisponível (%s) — usando JSONL.", _pg_import_error)
         _USE_PG = False
 else:
     logger.info("crypto_logger: sem DATABASE_URL — estudo usará arquivo JSONL (%s).",
@@ -193,6 +195,7 @@ def estudo_diag() -> Dict[str, Any]:
         "database_url_presente": bool(url),
         "database_url_host": host,          # só host:porta, sem usuário/senha
         "psycopg2_importado": _psycopg2 is not None,
+        "erro_import_psycopg2": _pg_import_error,
         "use_pg": _USE_PG,
         "pg_ready": _pg_ready,
         "conexao_ok": conexao_ok,
