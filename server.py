@@ -348,6 +348,7 @@ def estudo():
         limite = 200
     resp = {
         "backend": crypto_logger.estudo_backend(),
+        "diag_backend": crypto_logger.estudo_diag(),
         "arquivo": (
             f"postgres::{crypto_logger.ESTUDO_TABELA}"
             if crypto_logger._USE_PG else crypto_logger.ESTUDO_PATH

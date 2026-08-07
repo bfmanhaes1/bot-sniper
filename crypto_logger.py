@@ -168,6 +168,38 @@ def estudo_backend() -> str:
         return f"postgres ({ESTUDO_TABELA})" if _pg_ready else "postgres (conectando)"
     return "jsonl"
 
+
+def estudo_diag() -> Dict[str, Any]:
+    """Diagnóstico do backend do estudo (sem vazar a senha da DATABASE_URL).
+    Ajuda a descobrir POR QUE o Postgres não está ativo em produção."""
+    url = DATABASE_URL or ""
+    host = ""
+    if "@" in url:
+        try:
+            host = url.split("@", 1)[1].split("/", 1)[0]  # host:porta
+        except Exception:  # noqa: BLE001
+            host = "?"
+    conexao_ok = None
+    erro_conexao = None
+    if _USE_PG:
+        try:
+            _pg_exec("SELECT 1", fetch="one")
+            conexao_ok = True
+        except Exception as exc:  # noqa: BLE001
+            conexao_ok = False
+            erro_conexao = str(exc)[:300]
+    return {
+        "backend": estudo_backend(),
+        "database_url_presente": bool(url),
+        "database_url_host": host,          # só host:porta, sem usuário/senha
+        "psycopg2_importado": _psycopg2 is not None,
+        "use_pg": _USE_PG,
+        "pg_ready": _pg_ready,
+        "conexao_ok": conexao_ok,
+        "erro_conexao": erro_conexao,
+        "tabela": ESTUDO_TABELA,
+    }
+
 # Campos na ordem em que aparecem na tabela Markdown
 _COLUNAS = [
     "hora", "evento", "moeda", "timeframe", "alavancagem", "sinal_tsts",
