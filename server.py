@@ -298,8 +298,12 @@ def diag():
         "estudo_tpsl": {
             "ativa": getattr(controller, "estudo_ativa", None),
             "janela_min_por_tf": getattr(controller, "estudo_janela_min", {}),
+            "backend": crypto_logger.estudo_backend(),
             "data_dir": crypto_logger.DATA_DIR,
-            "arquivo_livro_razao": crypto_logger.ESTUDO_PATH,
+            "arquivo_livro_razao": (
+                f"postgres::{crypto_logger.ESTUDO_TABELA}"
+                if crypto_logger._USE_PG else crypto_logger.ESTUDO_PATH
+            ),
             "resumo": crypto_logger.resumo_estudo(),
         },
         "dias_com_registro": crypto_logger.dias_disponiveis()[:10],
@@ -343,7 +347,11 @@ def estudo():
     except (TypeError, ValueError):
         limite = 200
     resp = {
-        "arquivo": crypto_logger.ESTUDO_PATH,
+        "backend": crypto_logger.estudo_backend(),
+        "arquivo": (
+            f"postgres::{crypto_logger.ESTUDO_TABELA}"
+            if crypto_logger._USE_PG else crypto_logger.ESTUDO_PATH
+        ),
         "data_dir": crypto_logger.DATA_DIR,
         "resumo": crypto_logger.resumo_estudo(moeda, tf),
     }

@@ -59,6 +59,115 @@ logger.info("crypto_logger: DATA_DIR=%s | LOG_DIR=%s | ESTUDO=%s",
 
 _lock = threading.Lock()
 
+# =========================================================================== #
+# BACKEND DURÁVEL DO ESTUDO: POSTGRES (com fallback automático para JSONL)
+# =========================================================================== #
+# O disco do Railway é EFÊMERO e o plano não expôs Volumes, então o livro-razão
+# do estudo de TP/SL é gravado num POSTGRES (mesmo padrão do bot do MNQ). O
+# Railway injeta a variável DATABASE_URL quando você adiciona o addon Postgres.
+# Se DATABASE_URL não existir (ex.: rodando local nos testes), o código cai
+# automaticamente no arquivo JSONL — nada quebra. A API pública
+# (registrar_estudo / ler_estudo / resumo_estudo) é a MESMA nos dois backends,
+# então crypto_shadow.py e server.py não precisam saber qual está em uso.
+DATABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("DATABASE_PUBLIC_URL")
+    or ""
+).strip()
+
+# Nome da tabela do livro-razão (append-only) no Postgres.
+ESTUDO_TABELA = os.environ.get("ESTUDO_TABELA", "estudo_tpsl")
+
+_USE_PG = False
+_psycopg2 = None
+_pg_Json = None
+if DATABASE_URL:
+    try:
+        import psycopg2 as _psycopg2  # type: ignore
+        from psycopg2.extras import Json as _pg_Json  # type: ignore
+        _USE_PG = True
+        logger.info("crypto_logger: estudo usará POSTGRES (DATABASE_URL detectada).")
+    except ImportError as _exc:
+        logger.error("crypto_logger: psycopg2 indisponível (%s) — usando JSONL.", _exc)
+        _USE_PG = False
+else:
+    logger.info("crypto_logger: sem DATABASE_URL — estudo usará arquivo JSONL (%s).",
+                ESTUDO_PATH)
+
+_pg_ready = False
+_pg_lock = threading.Lock()
+
+
+def _pg_connect():
+    """Abre uma conexão nova (autocommit). Conexão curta = robusto a drops."""
+    conn = _psycopg2.connect(DATABASE_URL, connect_timeout=10)
+    conn.autocommit = True
+    return conn
+
+
+def _pg_exec(sql: str, params=None, fetch: Optional[str] = None):
+    """Executa uma query fechando a conexão ao final. fetch: None|'one'|'all'."""
+    conn = None
+    try:
+        conn = _pg_connect()
+        with conn.cursor() as cur:
+            cur.execute(sql, params or ())
+            if fetch == "all":
+                return cur.fetchall()
+            if fetch == "one":
+                return cur.fetchone()
+            return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _pg_init() -> bool:
+    """Cria a tabela do estudo se ainda não existir. Idempotente e cacheado."""
+    global _pg_ready
+    if not _USE_PG:
+        return False
+    if _pg_ready:
+        return True
+    with _pg_lock:
+        if _pg_ready:
+            return True
+        try:
+            _pg_exec(
+                f"""
+                CREATE TABLE IF NOT EXISTS {ESTUDO_TABELA} (
+                    id         BIGSERIAL PRIMARY KEY,
+                    criado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    moeda      TEXT,
+                    tf         TEXT,
+                    mfe_pct    DOUBLE PRECISION,
+                    dd_pct     DOUBLE PRECISION,
+                    payload    JSONB NOT NULL
+                );
+                """
+            )
+            _pg_exec(
+                f"CREATE INDEX IF NOT EXISTS idx_{ESTUDO_TABELA}_moeda_tf "
+                f"ON {ESTUDO_TABELA} (moeda, tf);"
+            )
+            _pg_ready = True
+            logger.info("crypto_logger: tabela Postgres '%s' pronta.", ESTUDO_TABELA)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("crypto_logger: falha ao inicializar Postgres (%s) — "
+                         "caindo para JSONL nesta gravação.", exc)
+            return False
+
+
+def estudo_backend() -> str:
+    """Rótulo do backend em uso, para exibir em /diag e /estudo."""
+    if _USE_PG:
+        return f"postgres ({ESTUDO_TABELA})" if _pg_ready else "postgres (conectando)"
+    return "jsonl"
+
 # Campos na ordem em que aparecem na tabela Markdown
 _COLUNAS = [
     "hora", "evento", "moeda", "timeframe", "alavancagem", "sinal_tsts",
@@ -254,10 +363,38 @@ def limpar_dia(dia: Optional[str] = None) -> Dict[str, Any]:
 # por uma janela FIXA completa (não para no TP/SL) e grava aqui a excursão máxima
 # a favor (MFE) e contra (DD/MAE). Uma linha JSON por entrada. Nunca sobrescreve.
 
+def _f(v):
+    """Converte para float de forma segura (ou None)."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def registrar_estudo(reg: Dict[str, Any]) -> Dict[str, Any]:
-    """Adiciona (append) UMA linha JSON no livro-razão durável do estudo de TP/SL."""
+    """
+    Grava UMA entrada observada no livro-razão durável do estudo de TP/SL.
+    Backend: POSTGRES quando há DATABASE_URL (durável, sobrevive a redeploys);
+    senão, arquivo JSONL. Em erro no Postgres, cai para o JSONL (nunca perde).
+    """
     reg = dict(reg or {})
     reg.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+
+    if _USE_PG and _pg_init():
+        try:
+            _pg_exec(
+                f"INSERT INTO {ESTUDO_TABELA} "
+                f"(moeda, tf, mfe_pct, dd_pct, payload) VALUES (%s, %s, %s, %s, %s)",
+                (reg.get("moeda"), reg.get("tf"),
+                 _f(reg.get("mfe_pct")), _f(reg.get("dd_pct")),
+                 _pg_Json(reg)),
+            )
+            return reg
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Falha ao gravar estudo no Postgres (%s) — fallback JSONL.", exc)
+
     try:
         with _lock:
             with open(ESTUDO_PATH, "a", encoding="utf-8") as f:
@@ -270,8 +407,25 @@ def registrar_estudo(reg: Dict[str, Any]) -> Dict[str, Any]:
 def ler_estudo(limite: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     Lê o livro-razão do estudo (todas as linhas, ou as últimas `limite`).
+    Backend: POSTGRES quando disponível; senão, arquivo JSONL.
     Ignora linhas corrompidas silenciosamente (robustez).
     """
+    if _USE_PG and _pg_init():
+        try:
+            if limite and limite > 0:
+                rows = _pg_exec(
+                    f"SELECT payload FROM {ESTUDO_TABELA} ORDER BY id DESC LIMIT %s",
+                    (limite,), fetch="all") or []
+                rows = list(reversed(rows))
+            else:
+                rows = _pg_exec(
+                    f"SELECT payload FROM {ESTUDO_TABELA} ORDER BY id",
+                    fetch="all") or []
+            # psycopg2 já decodifica JSONB em dict.
+            return [r[0] for r in rows if isinstance(r[0], dict)]
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Falha ao ler estudo do Postgres (%s) — fallback JSONL.", exc)
+
     if not os.path.exists(ESTUDO_PATH):
         return []
     linhas: List[Dict[str, Any]] = []
@@ -346,7 +500,8 @@ def resumo_estudo(moeda: Optional[str] = None,
         por_combo.setdefault(chave, []).append(r)
 
     return {
-        "arquivo": ESTUDO_PATH,
+        "backend": estudo_backend(),
+        "arquivo": (f"postgres::{ESTUDO_TABELA}" if _USE_PG else ESTUDO_PATH),
         "total_entradas": len(regs),
         "geral": _stats(regs),
         "por_combinacao": {k: _stats(v) for k, v in sorted(por_combo.items())},

@@ -12,6 +12,12 @@ import tempfile
 # Isola o DATA_DIR ANTES de importar o crypto_logger (ele resolve o caminho no import).
 _TMP = tempfile.mkdtemp(prefix="estudo_test_")
 os.environ["CRYPTO_DATA_DIR"] = _TMP
+# Este teste valida a LÓGICA do estudo (janela/MFE/DD) de forma determinística no
+# backend de ARQUIVO (JSONL). Por isso removemos qualquer DATABASE_URL do ambiente
+# ANTES de importar o crypto_logger — o teste do backend Postgres é o
+# test_estudo_postgres.py (integração). Assim os dois não interferem entre si.
+os.environ.pop("DATABASE_URL", None)
+os.environ.pop("DATABASE_PUBLIC_URL", None)
 
 import crypto_logger          # noqa: E402
 from crypto_shadow import CryptoShadowController  # noqa: E402
