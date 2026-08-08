@@ -138,8 +138,12 @@
   "execucao_real": {
     "_comentario_execucao_real": "CAMADA DE EXECUCAO REAL (dinheiro de verdade). 'ativa' e o MASTER SWITCH: com false (padrao) NADA executa, o bot segue 100% em sombra. Com 'ativa':true mas 'dry_run':true, as chamadas a Bitget sao SIMULADAS (validacao sem risco). So vira dinheiro real com ativa=true E dry_run=false.",
     "ativa": true,
-    "dry_run": true,
+    "dry_run": false,
+    "_comentario_dry_run": "⚠️ DINHEIRO REAL! false = ordens REAIS na Bitget. true = simulacao (validacao segura).",
     "moedas": [
+      "BTC",
+      "ETH",
+      "SOL",
       "VIRTUAL"
     ],
     "timeframes": [
@@ -157,9 +161,11 @@
       "R7"
     ],
     "_comentario_regras": "Libera entradas boas que caem em grade None. R6=5m+1h a favor/15m neutro; R7=so 5m a favor (15m/1h neutros). Opcoes extras: R5 (5m neutro, 15m+1h a favor), R8 (so 15m a favor), R9 (conflito 5mx1h com VWAP a favor). NAO recomendado R3 (fallback).",
-    "max_posicoes": 3,
+    "max_posicoes": 2,
+    "_comentario_max_posicoes": "Maximo de 2 posicoes SIMULTANEAS no executor (4 moedas, mas max 2 abertas ao mesmo tempo).",
     "uma_ordem_por_moeda": true,
-    "margem_usdt": 100,
+    "margem_usdt": 70,
+    "_comentario_margem": "$70 por ordem. 2 posicoes simultaneas = $140 usado, $160 de buffer.",
     "capital_total_usdt": 300,
     "alavancagem_base": 5,
     "alavancagem_grade_a": 10,
