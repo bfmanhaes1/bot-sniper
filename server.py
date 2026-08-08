@@ -300,37 +300,46 @@ def test_c1m():
     ok5, det5 = c.checar("VIRTUAL", "buy")
     
     # --- TESTE DO EXECUTOR (sem executar, só checar guardas) ---
-    ex = controller.executor_real if hasattr(controller, "executor_real") else None
+    ex = getattr(controller, "executor_real", None)
     resultados = []
+    erro_executor = None
     
-    if ex:
-        # grade A + 1m FAVOR (deve entrar com 10x)
-        ok_a_fav, msg_a_fav = ex.pode_entrar("VIRTUAL", "5m", "A", "buy", "R4", "FAVOR")
-        # grade A + 1m CONTRA (deve entrar com 5x — modulador rebaixa)
-        ok_a_con, msg_a_con = ex.pode_entrar("VIRTUAL", "5m", "A", "buy", "R4", "CONTRA")
-        # grade C + 1m FAVOR (deve entrar)
-        ok_c_fav, msg_c_fav = ex.pode_entrar("VIRTUAL", "5m", "C", "buy", "R2", "FAVOR")
-        # grade C + 1m CONTRA (bloqueado pelo porteiro)
-        ok_c_con, msg_c_con = ex.pode_entrar("VIRTUAL", "5m", "C", "buy", "R2", "CONTRA")
-        # grade None + regra R6 + 1m FAVOR (deve entrar)
-        ok_n_fav, msg_n_fav = ex.pode_entrar("VIRTUAL", "5m", None, "buy", "R6", "FAVOR")
-        # grade None + regra R6 + 1m CONTRA (bloqueado pelo porteiro)
-        ok_n_con, msg_n_con = ex.pode_entrar("VIRTUAL", "5m", None, "buy", "R6", "CONTRA")
-        
-        resultados = [
-            {"caso": "A + 1m FAVOR", "passa": ok_a_fav, "msg": msg_a_fav,
-             "esperado": "entra com 10x"},
-            {"caso": "A + 1m CONTRA", "passa": ok_a_con, "msg": msg_a_con,
-             "esperado": "entra com 5x (modulador rebaixa)"},
-            {"caso": "C + 1m FAVOR", "passa": ok_c_fav, "msg": msg_c_fav,
-             "esperado": "entra"},
-            {"caso": "C + 1m CONTRA", "passa": ok_c_con, "msg": msg_c_con,
-             "esperado": "BLOQUEADO (porteiro)"},
-            {"caso": "None+R6 + 1m FAVOR", "passa": ok_n_fav, "msg": msg_n_fav,
-             "esperado": "entra"},
-            {"caso": "None+R6 + 1m CONTRA", "passa": ok_n_con, "msg": msg_n_con,
-             "esperado": "BLOQUEADO (porteiro)"},
-        ]
+    if ex and ex.client is not None:
+        try:
+            # grade A + 1m FAVOR (deve entrar com 10x)
+            ok_a_fav, msg_a_fav = ex.pode_entrar("VIRTUAL", "5m", "A", "buy", "R4", "FAVOR")
+            # grade A + 1m CONTRA (deve entrar com 5x — modulador rebaixa)
+            ok_a_con, msg_a_con = ex.pode_entrar("VIRTUAL", "5m", "A", "buy", "R4", "CONTRA")
+            # grade C + 1m FAVOR (deve entrar)
+            ok_c_fav, msg_c_fav = ex.pode_entrar("VIRTUAL", "5m", "C", "buy", "R2", "FAVOR")
+            # grade C + 1m CONTRA (bloqueado pelo porteiro)
+            ok_c_con, msg_c_con = ex.pode_entrar("VIRTUAL", "5m", "C", "buy", "R2", "CONTRA")
+            # grade None + regra R6 + 1m FAVOR (deve entrar)
+            ok_n_fav, msg_n_fav = ex.pode_entrar("VIRTUAL", "5m", None, "buy", "R6", "FAVOR")
+            # grade None + regra R6 + 1m CONTRA (bloqueado pelo porteiro)
+            ok_n_con, msg_n_con = ex.pode_entrar("VIRTUAL", "5m", None, "buy", "R6", "CONTRA")
+            
+            resultados = [
+                {"caso": "A + 1m FAVOR", "passa": ok_a_fav, "msg": msg_a_fav,
+                 "esperado": "entra com 10x"},
+                {"caso": "A + 1m CONTRA", "passa": ok_a_con, "msg": msg_a_con,
+                 "esperado": "entra com 5x (modulador rebaixa)"},
+                {"caso": "C + 1m FAVOR", "passa": ok_c_fav, "msg": msg_c_fav,
+                 "esperado": "entra"},
+                {"caso": "C + 1m CONTRA", "passa": ok_c_con, "msg": msg_c_con,
+                 "esperado": "BLOQUEADO (porteiro)"},
+                {"caso": "None+R6 + 1m FAVOR", "passa": ok_n_fav, "msg": msg_n_fav,
+                 "esperado": "entra"},
+                {"caso": "None+R6 + 1m CONTRA", "passa": ok_n_con, "msg": msg_n_con,
+                 "esperado": "BLOQUEADO (porteiro)"},
+            ]
+        except Exception as e:
+            erro_executor = str(e)
+    else:
+        if ex is None:
+            erro_executor = "executor_real nao inicializado (import falhou?)"
+        elif ex.client is None:
+            erro_executor = f"cliente Bitget nao iniciado: {ex.erro_init}"
     
     return jsonify({
         "teste": "Fluxo completo c1m -> relativo -> executor",
@@ -374,10 +383,10 @@ def test_c1m():
                 "obs": "grade C com 1m contra deve BLOQUEAR",
             },
         },
-        "executor_guardas": resultados if ex else "executor_real nao disponivel (ativa=false)",
+        "executor_guardas": resultados if resultados else erro_executor,
         "resumo": {
             "c1m_pine_para_relativo": "OK (BULL->FAVOR, BEAR->CONTRA, NEUT->N)",
-            "porteiro_1m": "OK (bloqueia C e None-por-regra quando 1m CONTRA)" if resultados else "N/A",
+            "porteiro_1m": "OK (bloqueia C e None-por-regra quando 1m CONTRA)" if resultados else f"N/A ({erro_executor})" if erro_executor else "N/A",
             "modulador_1m": "ver campo 'executor_guardas' acima" if resultados else "N/A",
             "integracao_completa": "FUNCIONANDO ✅" if all([
                 det1.get("relativo", {}).get("c1m") == "FAVOR",
