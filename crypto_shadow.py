@@ -490,7 +490,8 @@ class CryptoShadowController:
 
     def _abrir_simulacao(self, moeda: str, tf: str, action: str, entry: float,
                          cruzamento: int, sinal_tsts: str, rsi: Optional[float],
-                         grade: Optional[str] = None, regra: Optional[str] = None):
+                         grade: Optional[str] = None, regra: Optional[str] = None,
+                         ctx_catalyst: Optional[Dict[str, Any]] = None):
         """Abre uma posição simulada e registra ENTRADA para cada alavancagem."""
         tp, sl = self._tp_sl(action, entry, tf)
         chave = f"{moeda}_{tf}"
@@ -529,8 +530,13 @@ class CryptoShadowController:
         # Todas as guardas (moeda/tf/grade/limite de posições) ficam no executor.
         if getattr(self, "executor_real", None) is not None:
             try:
+                # micro-tendência do 1m relativa ao sinal (FAVOR/CONTRA/N),
+                # vinda do detalhe do catalisador (relativo.c1m).
+                rel_1m = None
+                if ctx_catalyst:
+                    rel_1m = (ctx_catalyst.get("relativo") or {}).get("c1m")
                 det_real = self.executor_real.abrir(
-                    moeda, tf, action, entry, tp, sl, grade, regra)
+                    moeda, tf, action, entry, tp, sl, grade, regra, rel_1m)
                 if det_real is not None:
                     crypto_logger.registrar("ENTRADA_REAL", {
                         "moeda": moeda, "timeframe": tf,
@@ -801,7 +807,8 @@ class CryptoShadowController:
             n = cruzamento or 1
             if entry and entry > 0:
                 self._abrir_simulacao(moeda, tf, action, entry, n, sinal_txt, rsi,
-                                      det_gate.get("grade"), det_gate.get("regra"))
+                                      det_gate.get("grade"), det_gate.get("regra"),
+                                      ctx_catalyst=det_gate)
             else:
                 crypto_logger.registrar("ENTRADA", {
                     "moeda": moeda, "timeframe": tf, "alavancagem": None,
@@ -844,7 +851,8 @@ class CryptoShadowController:
                             "analise": True, "cruzamento": n,
                             "detalhe": det_gate}
                 self._abrir_simulacao(moeda, tf, action, entry, n, sinal_txt, rsi,
-                                      det_gate.get("grade"), det_gate.get("regra"))
+                                      det_gate.get("grade"), det_gate.get("regra"),
+                                      ctx_catalyst=det_gate)
                 self._engine(moeda, tf).confirmar_entrada(moeda)
             return {"ok": True, "decisao": hipotese, "analise": True,
                     "cruzamento": n, "motivo": decisao.get("motivo")}

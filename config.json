@@ -147,10 +147,16 @@
     ],
     "grades_permitidas": [
       "A",
-      "B"
+      "B",
+      "C"
     ],
     "exigir_grade": true,
-    "_comentario_grade": "So entra em grade A ou B do catalisador. C (contra-tendencia) e sem grade sao barrados.",
+    "_comentario_grade": "Entra em grade A, B ou C. C (contra-tendencia de 1h) so entra com a trava do 1m (grade_c_exige_1m_favor). Sem grade (None) so entra se a REGRA estiver em regras_permitidas.",
+    "regras_permitidas": [
+      "R6",
+      "R7"
+    ],
+    "_comentario_regras": "Libera entradas boas que caem em grade None. R6=5m+1h a favor/15m neutro; R7=so 5m a favor (15m/1h neutros). Opcoes extras: R5 (5m neutro, 15m+1h a favor), R8 (so 15m a favor), R9 (conflito 5mx1h com VWAP a favor). NAO recomendado R3 (fallback).",
     "max_posicoes": 3,
     "uma_ordem_por_moeda": true,
     "margem_usdt": 100,
@@ -158,6 +164,11 @@
     "alavancagem_base": 5,
     "alavancagem_grade_a": 10,
     "_comentario_alav": "5x padrao; 10x apenas quando o catalisador der grade A (contexto forte).",
+    "micro_1m_ativo": true,
+    "micro_1m_porteiro": true,
+    "micro_1m_modulador": true,
+    "grade_c_exige_1m_favor": true,
+    "_comentario_1m": "MICRO-TENDENCIA 1m. porteiro=bloqueia setups marginais (grade C ou None-por-regra) quando o 1m esta CONTRA o sinal. modulador=o 1m ajusta a alavancagem (1m CONTRA tira o boost 10x do grade A -> base; 1m neutro tambem tira o boost do A). grade_c_exige_1m_favor=grade C so entra com 1m A FAVOR. Precisa que o alerta do catalisador envie o campo c1m.",
     "product_type": "USDT-FUTURES",
     "margin_coin": "USDT",
     "margin_mode": "isolated"

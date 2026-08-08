@@ -60,6 +60,25 @@ class ExecutorReal:
         self.max_posicoes: int = int(cfg.get("max_posicoes", 3))
         self.uma_ordem_por_moeda: bool = bool(cfg.get("uma_ordem_por_moeda", True))
 
+        # ---- REGRAS permitidas em GRADE None ---------------------------
+        # Entradas boas que o catalisador libera mas caem em grade None
+        # (ex.: R6 = 5m+1h a favor/15m neutro; R7 = só 5m a favor). Se a grade
+        # não estiver em grades_permitidas MAS a regra estiver aqui, entra.
+        self.regras_permitidas: List[str] = [
+            str(r).upper() for r in cfg.get("regras_permitidas", ["R6", "R7"])]
+
+        # ---- MICRO-TENDÊNCIA 1m (porteiro + modulador) -----------------
+        # porteiro  = bloqueia setups marginais (grade C / None-por-regra)
+        #             quando o 1m está CONTRA o sinal.
+        # modulador = o 1m ajusta a alavancagem: 1m CONTRA rebaixa (A perde o
+        #             boost 10x -> base); 1m neutro tira o boost do A também.
+        self.micro_1m_ativo: bool = bool(cfg.get("micro_1m_ativo", True))
+        self.micro_1m_porteiro: bool = bool(cfg.get("micro_1m_porteiro", True))
+        self.micro_1m_modulador: bool = bool(cfg.get("micro_1m_modulador", True))
+        # Trava específica: grade C só entra se o 1m estiver A FAVOR.
+        self.grade_c_exige_1m_favor: bool = bool(
+            cfg.get("grade_c_exige_1m_favor", True))
+
         # ---- Dinheiro / alavancagem ------------------------------------
         self.margem_usdt: float = float(cfg.get("margem_usdt", 100))
         self.capital_total_usdt: float = float(cfg.get("capital_total_usdt", 300))
@@ -188,8 +207,14 @@ class ExecutorReal:
 
     # ------------------------------------------------------------------ #
     def pode_entrar(self, moeda: str, tf: str, grade: Optional[str],
-                    action: str) -> Tuple[bool, str]:
-        """Roda TODAS as guardas. Retorna (ok, motivo)."""
+                    action: str, regra: Optional[str] = None,
+                    rel_1m: Optional[str] = None) -> Tuple[bool, str]:
+        """Roda TODAS as guardas. Retorna (ok, motivo).
+
+        grade  : A/B/C/None (força do contexto do catalisador).
+        regra  : R1..R9 (regra clássica que liberou/bloqueou a entrada).
+        rel_1m : FAVOR/CONTRA/N — micro-tendência do 1m relativa ao sinal.
+        """
         if not self.ativa:
             return False, "execucao_real desligada"
         if self.client is None:
@@ -201,9 +226,36 @@ class ExecutorReal:
             return False, f"tf {tf} fora da lista permitida {self.timeframes}"
         if action not in ("buy", "sell"):
             return False, f"action inválida: {action}"
-        if self.exigir_grade and (grade not in self.grades_permitidas):
-            return False, (f"grade {grade} não permitida "
-                           f"(só {self.grades_permitidas})")
+
+        regra_u = (regra or "").upper()
+        rel = (rel_1m or "N").upper()
+
+        # --- Admissibilidade: por GRADE (A/B/C) OU por REGRA (grade None) ---
+        if self.exigir_grade:
+            admit_grade = grade in self.grades_permitidas
+            admit_regra = (grade not in self.grades_permitidas
+                           and regra_u in self.regras_permitidas)
+            if not (admit_grade or admit_regra):
+                return False, (f"grade {grade} não permitida (só "
+                               f"{self.grades_permitidas}) e regra {regra_u} "
+                               f"fora de {self.regras_permitidas}")
+        else:
+            admit_regra = False
+
+        # --- PORTEIRO do 1m: micro-tendência CONTRA barra setups marginais ---
+        # (grade C ou entradas liberadas só por regra em grade None). Grades
+        # fortes A/B NÃO são barradas pelo porteiro — só têm a alavancagem
+        # rebaixada pelo modulador (um recuo no 1m dentro de tendência forte
+        # costuma ser um bom ponto de entrada).
+        if self.micro_1m_ativo and self.micro_1m_porteiro and rel == "CONTRA":
+            if grade == "C" or grade is None or admit_regra:
+                return False, ("porteiro 1m: micro-tendência do 1m CONTRA o "
+                               "sinal (setup marginal bloqueado)")
+
+        # --- Trava específica do GRADE C: exige 1m A FAVOR ------------------
+        if grade == "C" and self.grade_c_exige_1m_favor and rel != "FAVOR":
+            return False, (f"grade C exige 1m A FAVOR (trava do 1m); 1m={rel}")
+
         if self.symbols.get(moeda) is None:
             return False, f"sem símbolo Bitget para {moeda}"
         with self._lock:
@@ -218,17 +270,39 @@ class ExecutorReal:
     # ------------------------------------------------------------------ #
     def abrir(self, moeda: str, tf: str, action: str, entry: float,
               tp: float, sl: float, grade: Optional[str],
-              regra: Optional[str]) -> Optional[Dict[str, Any]]:
+              regra: Optional[str],
+              rel_1m: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Abre a ordem REAL (ou dry-run) se todas as guardas passarem.
         Retorna o detalhe ou None se não entrou."""
         moeda = (moeda or "").upper()
-        ok, motivo = self.pode_entrar(moeda, tf, grade, action)
+        ok, motivo = self.pode_entrar(moeda, tf, grade, action, regra, rel_1m)
         if not ok:
             self.log.info("[EXEC-REAL] %s %s: NÃO entrou — %s", moeda, tf, motivo)
             return None
 
         symbol = self.symbols[moeda]
+        rel = (rel_1m or "N").upper()
+
+        # --- Alavancagem base pela grade (A=boost, resto=base) ----------
         leverage = self.alav_grade_a if (grade == "A") else self.alav_base
+
+        # --- MODULADOR do 1m: ajusta a alavancagem pela micro-tendência --
+        motivo_mod = None
+        if self.micro_1m_ativo and self.micro_1m_modulador:
+            if rel == "CONTRA":
+                # micro-tendência contra: rebaixa para a base (tira o boost A).
+                if leverage > self.alav_base:
+                    motivo_mod = f"1m CONTRA: {leverage}x -> {self.alav_base}x"
+                    leverage = self.alav_base
+            elif rel == "N" and grade == "A":
+                # 1m não confirma o boost do A: usa a base em vez de 10x.
+                if leverage > self.alav_base:
+                    motivo_mod = f"1m neutro: {leverage}x -> {self.alav_base}x (grade A sem boost)"
+                    leverage = self.alav_base
+        if motivo_mod:
+            self.log.info("[EXEC-REAL] modulador 1m %s %s: %s",
+                          moeda, tf, motivo_mod)
+
         notional = self.margem_usdt * leverage
         if not entry or entry <= 0:
             self.log.error("[EXEC-REAL] %s: entry inválido (%s).", moeda, entry)
@@ -257,6 +331,7 @@ class ExecutorReal:
             "leverage": leverage, "margem_usdt": self.margem_usdt,
             "notional_usdt": round(notional, 2), "qty": qty,
             "grade": grade, "regra": regra,
+            "rel_1m": rel, "modulador_1m": motivo_mod,
             "order_id": order_id, "dry_run": self.dry_run,
             "aberta_em": _now_iso(),
         }
@@ -291,7 +366,12 @@ class ExecutorReal:
             "moedas": self.moedas,
             "timeframes": self.timeframes,
             "grades_permitidas": self.grades_permitidas,
+            "regras_permitidas": self.regras_permitidas,
             "exigir_grade": self.exigir_grade,
+            "micro_1m_ativo": self.micro_1m_ativo,
+            "micro_1m_porteiro": self.micro_1m_porteiro,
+            "micro_1m_modulador": self.micro_1m_modulador,
+            "grade_c_exige_1m_favor": self.grade_c_exige_1m_favor,
             "max_posicoes": self.max_posicoes,
             "uma_ordem_por_moeda": self.uma_ordem_por_moeda,
             "margem_usdt": self.margem_usdt,
