@@ -272,7 +272,9 @@ def diag():
         "modo_autonomo": MODO_AUTONOMO,
         "aceitar_webhooks": ACEITAR_WEBHOOKS,
         "scanner_autonomo": scanner.snapshot() if MODO_AUTONOMO else {"ativo": False},
-        "execucao_real_bitget": False,
+        "execucao_real_bitget": (controller.executor_real.status()
+                                 if getattr(controller, "executor_real", None) is not None
+                                 else {"ativa": False}),
         "telegram": {"token_presente": tg_token_ok, "token_valido": tg_valid,
                      "chat_id": getattr(notifier, "chat_id", None)},
         "combinacoes_totais": len(controller.moedas) * len(controller.timeframes) * len(controller.alavancagens),

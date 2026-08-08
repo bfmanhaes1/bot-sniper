@@ -251,6 +251,16 @@ class CryptoShadowController:
         # ENTRA/ESPERA. Filtro puro (config "catalyst").
         self.catalyst = CatalystStore(config)
 
+        # Camada de EXECUÇÃO REAL (dinheiro real na Bitget). Roda EM PARALELO à
+        # sombra. MASTER SWITCH em config["execucao_real"]["ativa"] (padrão OFF).
+        # Se qualquer coisa falhar aqui, a sombra continua normalmente.
+        self.executor_real = None
+        try:
+            from executor_real import ExecutorReal
+            self.executor_real = ExecutorReal(config, logger, notifier=notifier)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Falha ao iniciar ExecutorReal (sombra segue normal): %s", exc)
+
     # ------------------------------------------------------------------ #
     def atualizar_confirmacao(self, componente: str, moeda: str,
                               data: Dict[str, Any]) -> Dict[str, Any]:
@@ -513,6 +523,30 @@ class CryptoShadowController:
                 "preco_saida_simulado": None, "resultado_simulado": None,
                 "tp_simulado": tp, "sl_simulado": sl,
             })
+
+        # --- EXECUÇÃO REAL (paralela à sombra) --------------------------
+        # Só age se o MASTER SWITCH estiver ligado (config execucao_real.ativa).
+        # Todas as guardas (moeda/tf/grade/limite de posições) ficam no executor.
+        if getattr(self, "executor_real", None) is not None:
+            try:
+                det_real = self.executor_real.abrir(
+                    moeda, tf, action, entry, tp, sl, grade, regra)
+                if det_real is not None:
+                    crypto_logger.registrar("ENTRADA_REAL", {
+                        "moeda": moeda, "timeframe": tf,
+                        "alavancagem": f"{det_real['leverage']}x",
+                        "sinal_tsts": sinal_tsts, "rsi_valor": rsi,
+                        "cruzamento_numero": cruzamento,
+                        "decisao_agente": "entrar_real",
+                        "direcao": det_real["direcao"],
+                        "preco_entrada_simulado": entry,
+                        "tp_simulado": tp, "sl_simulado": sl,
+                        "motivo": ("DRY-RUN" if det_real["dry_run"] else "AO VIVO"),
+                        "execucao_real": det_real,
+                    })
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[EXEC-REAL] erro ao abrir %s %s (sombra segue): %s",
+                             moeda, tf, exc)
 
     def _calcular_dd_mfe(self, pos: SimPosition):
         """
