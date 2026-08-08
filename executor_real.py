@@ -78,11 +78,15 @@ class ExecutorReal:
         self._posicoes: Dict[str, Dict[str, Any]] = self._carregar()
 
         # ---- Cliente Bitget --------------------------------------------
+        # O cliente é inicializado SEMPRE (mesmo com o master switch desligado)
+        # para permitir validar as credenciais via /diag. O construtor NÃO faz
+        # chamadas de rede; nenhuma ORDEM é enviada enquanto ativa=false.
         self.client: Optional[BitgetClient] = None
         self.erro_init: Optional[str] = None
-        if self.ativa:
-            self._init_client()
-        else:
+        self.credenciais_validas: Optional[bool] = None
+        self.saldo_usdt: Optional[float] = None
+        self._init_client()
+        if not self.ativa:
             self.log.info("[EXEC-REAL] MASTER SWITCH desligado (ativa=false). "
                           "Nenhuma ordem real será enviada — só sombra.")
 
@@ -109,9 +113,42 @@ class ExecutorReal:
                              modo, self.moedas, self.timeframes,
                              self.grades_permitidas, self.max_posicoes,
                              self.margem_usdt)
+            # Validação read-only das credenciais: consulta o saldo (chamada
+            # autenticada, NÃO envia ordem). Confirma que as chaves são válidas.
+            self._validar_credenciais()
         except Exception as exc:  # noqa: BLE001
             self.erro_init = repr(exc)
             self.log.error("[EXEC-REAL] Falha ao iniciar cliente Bitget: %s", exc)
+
+    # ------------------------------------------------------------------ #
+    def _validar_credenciais(self):
+        """Faz UMA chamada autenticada read-only (saldo) p/ validar as chaves.
+
+        A Bitget devolve code=='00000' em caso de sucesso; qualquer outro
+        código (ou erro de rede) significa chave inválida / sem permissão.
+        O cliente NÃO lança exceção nesses casos, por isso checamos o code.
+        """
+        if self.client is None:
+            return
+        try:
+            resp = self.client.get_account_balance()
+            code = str(resp.get("code"))
+            if code == "00000":
+                saldo = self.client.get_available_usdt()
+                self.saldo_usdt = float(saldo)
+                self.credenciais_validas = True
+                self.log.warning("[EXEC-REAL] Credenciais Bitget VÁLIDAS. "
+                                 "Saldo disponível: $%.2f USDT", self.saldo_usdt)
+            else:
+                self.credenciais_validas = False
+                self.erro_init = f"Bitget code={code}: {resp.get('msg')}"
+                self.log.error("[EXEC-REAL] Credenciais Bitget INVÁLIDAS/sem "
+                               "permissão: %s", self.erro_init)
+        except Exception as exc:  # noqa: BLE001
+            self.credenciais_validas = False
+            self.erro_init = repr(exc)
+            self.log.error("[EXEC-REAL] Erro ao validar credenciais Bitget: %s",
+                           exc)
 
     # ------------------------------------------------------------------ #
     def _carregar(self) -> Dict[str, Dict[str, Any]]:
@@ -248,6 +285,8 @@ class ExecutorReal:
             "ativa": self.ativa,
             "dry_run": self.dry_run,
             "cliente_ok": self.client is not None,
+            "credenciais_validas": self.credenciais_validas,
+            "saldo_usdt": self.saldo_usdt,
             "erro_init": self.erro_init,
             "moedas": self.moedas,
             "timeframes": self.timeframes,

@@ -51,7 +51,9 @@ def load_bitget_credentials(secrets_path: str = DEFAULT_SECRETS_PATH) -> Dict[st
     """
     env_key = os.getenv("BITGET_API_KEY")
     env_secret = os.getenv("BITGET_API_SECRET")
-    env_pass = os.getenv("BITGET_PASSPHRASE")
+    # Aceita os dois nomes de passphrase por robustez (alguns serviços usam
+    # BITGET_PASSPHRASE, outros BITGET_API_PASSPHRASE).
+    env_pass = os.getenv("BITGET_PASSPHRASE") or os.getenv("BITGET_API_PASSPHRASE")
 
     if env_key and env_secret and env_pass:
         logger.info("Credenciais Bitget carregadas de variáveis de ambiente.")
