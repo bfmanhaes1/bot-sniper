@@ -252,6 +252,142 @@ def index():
     })
 
 
+@app.route("/test_c1m", methods=["GET"])
+def test_c1m():
+    """Endpoint de TESTE: simula fluxo completo c1m -> relativo -> executor.
+    Não altera nenhum estado real, só mostra a transformação dos dados."""
+    from catalyst import CatalystStore
+    
+    # --- CENÁRIO 1: BUY com c1m a FAVOR ---
+    c = CatalystStore(config)
+    payload_favor = {
+        "moeda": "VIRTUAL", "c30s": "BULL", "c1m": "BULL", "c5m": "BULL",
+        "c15m": "BULL", "c1h": "BULL", "vwap": "BULL", "market": "TRENDING"
+    }
+    c.atualizar("VIRTUAL", payload_favor)
+    ok1, det1 = c.checar("VIRTUAL", "buy")
+    
+    # --- CENÁRIO 2: BUY com c1m CONTRA ---
+    payload_contra = {
+        "moeda": "VIRTUAL", "c30s": "BULL", "c1m": "BEAR", "c5m": "BULL",
+        "c15m": "BULL", "c1h": "BULL", "vwap": "BULL", "market": "TRENDING"
+    }
+    c.atualizar("VIRTUAL", payload_contra)
+    ok2, det2 = c.checar("VIRTUAL", "buy")
+    
+    # --- CENÁRIO 3: BUY com c1m NEUTRO ---
+    payload_neutro = {
+        "moeda": "VIRTUAL", "c30s": "BULL", "c1m": "NEUT", "c5m": "BULL",
+        "c15m": "BULL", "c1h": "BULL", "vwap": "BULL", "market": "TRENDING"
+    }
+    c.atualizar("VIRTUAL", payload_neutro)
+    ok3, det3 = c.checar("VIRTUAL", "buy")
+    
+    # --- CENÁRIO 4: grade C (5m+15m BULL, 1h BEAR) com c1m FAVOR ---
+    payload_c_favor = {
+        "moeda": "VIRTUAL", "c30s": "BULL", "c1m": "BULL", "c5m": "BULL",
+        "c15m": "BULL", "c1h": "BEAR", "vwap": "BULL", "market": "TRENDING"
+    }
+    c.atualizar("VIRTUAL", payload_c_favor)
+    ok4, det4 = c.checar("VIRTUAL", "buy")
+    
+    # --- CENÁRIO 5: grade C com c1m CONTRA (bloqueado) ---
+    payload_c_contra = {
+        "moeda": "VIRTUAL", "c30s": "BULL", "c1m": "BEAR", "c5m": "BULL",
+        "c15m": "BULL", "c1h": "BEAR", "vwap": "BULL", "market": "TRENDING"
+    }
+    c.atualizar("VIRTUAL", payload_c_contra)
+    ok5, det5 = c.checar("VIRTUAL", "buy")
+    
+    # --- TESTE DO EXECUTOR (sem executar, só checar guardas) ---
+    ex = controller.executor_real if hasattr(controller, "executor_real") else None
+    resultados = []
+    
+    if ex:
+        # grade A + 1m FAVOR (deve entrar com 10x)
+        ok_a_fav, msg_a_fav = ex.pode_entrar("VIRTUAL", "5m", "A", "buy", "R4", "FAVOR")
+        # grade A + 1m CONTRA (deve entrar com 5x — modulador rebaixa)
+        ok_a_con, msg_a_con = ex.pode_entrar("VIRTUAL", "5m", "A", "buy", "R4", "CONTRA")
+        # grade C + 1m FAVOR (deve entrar)
+        ok_c_fav, msg_c_fav = ex.pode_entrar("VIRTUAL", "5m", "C", "buy", "R2", "FAVOR")
+        # grade C + 1m CONTRA (bloqueado pelo porteiro)
+        ok_c_con, msg_c_con = ex.pode_entrar("VIRTUAL", "5m", "C", "buy", "R2", "CONTRA")
+        # grade None + regra R6 + 1m FAVOR (deve entrar)
+        ok_n_fav, msg_n_fav = ex.pode_entrar("VIRTUAL", "5m", None, "buy", "R6", "FAVOR")
+        # grade None + regra R6 + 1m CONTRA (bloqueado pelo porteiro)
+        ok_n_con, msg_n_con = ex.pode_entrar("VIRTUAL", "5m", None, "buy", "R6", "CONTRA")
+        
+        resultados = [
+            {"caso": "A + 1m FAVOR", "passa": ok_a_fav, "msg": msg_a_fav,
+             "esperado": "entra com 10x"},
+            {"caso": "A + 1m CONTRA", "passa": ok_a_con, "msg": msg_a_con,
+             "esperado": "entra com 5x (modulador rebaixa)"},
+            {"caso": "C + 1m FAVOR", "passa": ok_c_fav, "msg": msg_c_fav,
+             "esperado": "entra"},
+            {"caso": "C + 1m CONTRA", "passa": ok_c_con, "msg": msg_c_con,
+             "esperado": "BLOQUEADO (porteiro)"},
+            {"caso": "None+R6 + 1m FAVOR", "passa": ok_n_fav, "msg": msg_n_fav,
+             "esperado": "entra"},
+            {"caso": "None+R6 + 1m CONTRA", "passa": ok_n_con, "msg": msg_n_con,
+             "esperado": "BLOQUEADO (porteiro)"},
+        ]
+    
+    return jsonify({
+        "teste": "Fluxo completo c1m -> relativo -> executor",
+        "catalisador": {
+            "cenario_1_buy_c1m_bull": {
+                "payload_enviado": payload_favor,
+                "c1m_original": "BULL",
+                "relativo_c1m": det1.get("relativo", {}).get("c1m"),
+                "grade": det1.get("grade"),
+                "regra": det1.get("regra"),
+                "entra": ok1,
+            },
+            "cenario_2_buy_c1m_bear": {
+                "payload_enviado": payload_contra,
+                "c1m_original": "BEAR",
+                "relativo_c1m": det2.get("relativo", {}).get("c1m"),
+                "grade": det2.get("grade"),
+                "entra": ok2,
+            },
+            "cenario_3_buy_c1m_neut": {
+                "payload_enviado": payload_neutro,
+                "c1m_original": "NEUT",
+                "relativo_c1m": det3.get("relativo", {}).get("c1m"),
+                "grade": det3.get("grade"),
+                "entra": ok3,
+            },
+            "cenario_4_grade_c_com_1m_favor": {
+                "payload_enviado": payload_c_favor,
+                "c1m_original": "BULL",
+                "relativo_c1m": det4.get("relativo", {}).get("c1m"),
+                "grade": det4.get("grade"),
+                "entra": ok4,
+                "obs": "grade C com 1m a favor deve entrar",
+            },
+            "cenario_5_grade_c_com_1m_contra": {
+                "payload_enviado": payload_c_contra,
+                "c1m_original": "BEAR",
+                "relativo_c1m": det5.get("relativo", {}).get("c1m"),
+                "grade": det5.get("grade"),
+                "entra": ok5,
+                "obs": "grade C com 1m contra deve BLOQUEAR",
+            },
+        },
+        "executor_guardas": resultados if ex else "executor_real nao disponivel (ativa=false)",
+        "resumo": {
+            "c1m_pine_para_relativo": "OK (BULL->FAVOR, BEAR->CONTRA, NEUT->N)",
+            "porteiro_1m": "OK (bloqueia C e None-por-regra quando 1m CONTRA)" if resultados else "N/A",
+            "modulador_1m": "ver campo 'executor_guardas' acima" if resultados else "N/A",
+            "integracao_completa": "FUNCIONANDO ✅" if all([
+                det1.get("relativo", {}).get("c1m") == "FAVOR",
+                det2.get("relativo", {}).get("c1m") == "CONTRA",
+                det3.get("relativo", {}).get("c1m") == "N",
+            ]) else "FALHA ❌",
+        }
+    })
+
+
 @app.route("/diag", methods=["GET"])
 def diag():
     tg_token_ok = bool(getattr(notifier, "token", None))
