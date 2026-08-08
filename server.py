@@ -259,7 +259,7 @@ def test_c1m():
     from catalyst import CatalystStore
     
     # --- CENÁRIO 1: BUY com c1m a FAVOR ---
-    c = CatalystStore(config)
+    c = CatalystStore(CONFIG)
     payload_favor = {
         "moeda": "VIRTUAL", "c30s": "BULL", "c1m": "BULL", "c5m": "BULL",
         "c15m": "BULL", "c1h": "BULL", "vwap": "BULL", "market": "TRENDING"
