@@ -39,30 +39,30 @@
 
 ---
 
-### 2️⃣ RSI Cross (0/10 moedas) ❌
+### 2️⃣ RSI Cross (10/10 moedas — UP + DOWN) ✅
 
-| Moeda | Status | Endpoint | Observação |
-|-------|--------|----------|------------|
-| **VIRTUAL** | ❌ Faltando | `/rsi/VIRTUAL` | Precisa configurar no TradingView |
-| **BTC** | ❌ Faltando | `/rsi/BTC` | Precisa configurar no TradingView |
-| **BNB** | ❌ Faltando | `/rsi/BNB` | Precisa configurar no TradingView |
-| **ETH** | ❌ Faltando | `/rsi/ETH` | Precisa configurar no TradingView |
-| **SOL** | ❌ Faltando | `/rsi/SOL` | Precisa configurar no TradingView |
-| **LINK** | ❌ Faltando | `/rsi/LINK` | Precisa configurar no TradingView |
-| **AVAX** | ❌ Faltando | `/rsi/AVAX` | Precisa configurar no TradingView |
-| **NEAR** | ❌ Faltando | `/rsi/NEAR` | Precisa configurar no TradingView |
-| **APT** | ❌ Faltando | `/rsi/APT` | Precisa configurar no TradingView |
-| **BGB** | ❌ Faltando | `/rsi/BGB` | Precisa configurar no TradingView |
+Confirmado pelas fotos do TradingView (08/08): cada moeda tem **2 alertas de RSI
+ativos** (UP e DOWN) no timeframe 5m, apontando para `/rsi/{MOEDA}`.
 
-**Payload do RSI:**
+| Moeda | UP | DOWN | Endpoint |
+|-------|----|------|----------|
+| **VIRTUAL** | ✅ Active | ✅ Active | `/rsi/VIRTUAL` |
+| **BTC** | ✅ Active | ✅ Active | `/rsi/BTC` |
+| **BNB** | ✅ Active | ✅ Active | `/rsi/BNB` |
+| **ETH** | ✅ Active | ✅ Active | `/rsi/ETH` |
+| **SOL** | ✅ Active | ✅ Active | `/rsi/SOL` |
+| **LINK** | ✅ Active | ✅ Active | `/rsi/LINK` |
+| **AVAX** | ✅ Active | ✅ Active | `/rsi/AVAX` |
+| **NEAR** | ✅ Active | ✅ Active | `/rsi/NEAR` |
+| **APT** | ✅ Active | ✅ Active | `/rsi/APT` |
+| **BGB** | ✅ Active | ✅ Active | `/rsi/BGB` |
+
+**Payload do RSI (formato que você usa, confirmado nas fotos):**
 ```json
-{
-  "action": "buy",
-  "moeda": "BTC",
-  "timeframe": "5m",
-  "rsi_valor": 52.34
-}
+{"direction":"down","timeframe":"{{interval}}"}
 ```
+> ✅ O bot lê `direction` (up/down) e normaliza `{{interval}}` ("5" → "5m").
+> Testado end-to-end: Sniper BUY → RSI UP → **decisão "entrar"** ✅
 
 ---
 
@@ -98,20 +98,15 @@ Para uma **entrada** acontecer, o bot precisa de **2 alertas**:
 - ✅ **Guardas do 1m**: Porteiro e modulador funcionando
 - ✅ **Proteções**: Anti-stacking, moedas permitidas
 
-### ❌ O que está faltando:
+### ✅ Fluxo completo VALIDADO (teste end-to-end 08/08):
 
-- ❌ **Alertas do RSI**: Nenhum configurado ainda
-- ❌ **Entradas simuladas**: Não acontecem sem RSI cross
-
-### ⚠️ Comportamento atual:
-
-Quando um alerta do catalisador chega:
 ```
-Bot responde: "aguardar"
-Motivo: "Sinal BUY recebido, mas RSI está UP → SEGURANDO até o RSI cruzar para UP."
+1️⃣  Sniper BUY (/webhook/AVAX)  → "aguardar" (esperando RSI)
+2️⃣  RSI UP   (/rsi/AVAX)         → "entrar" (entrada confirmada!)
+    → Contador "entradas_simuladas" subiu de 0 → 1 ✅
 ```
 
-Isso é **CORRETO** — o bot está esperando a confirmação do RSI.
+Tudo funcionando: Sniper + RSI + executor (dry-run) processando corretamente.
 
 ---
 
