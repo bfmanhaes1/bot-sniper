@@ -137,7 +137,7 @@
   },
   "execucao_real": {
     "_comentario_execucao_real": "CAMADA DE EXECUCAO REAL (dinheiro de verdade). 'ativa' e o MASTER SWITCH: com false (padrao) NADA executa, o bot segue 100% em sombra. Com 'ativa':true mas 'dry_run':true, as chamadas a Bitget sao SIMULADAS (validacao sem risco). So vira dinheiro real com ativa=true E dry_run=false.",
-    "ativa": false,
+    "ativa": true,
     "dry_run": true,
     "moedas": [
       "VIRTUAL"
