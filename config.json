@@ -141,11 +141,31 @@
     "dry_run": false,
     "_comentario_dry_run": "⚠️ DINHEIRO REAL! false = ordens REAIS na Bitget. true = simulacao (validacao segura).",
     "moedas": [
-      "BTC",
-      "ETH",
       "SOL",
-      "VIRTUAL"
+      "VIRTUAL",
+      "AVAX",
+      "NEAR"
     ],
+    "_comentario_moedas": "BTC e ETH removidos (lentos demais). AVAX e NEAR adicionados (amplitude 4.7%/dia). SOL e VIRTUAL mantidos.",
+    "moedas_config": {
+      "SOL": {
+        "grades": ["A", "B", "C"],
+        "_comentario": "SOL opera em todas as grades (setup completo, moeda principal)"
+      },
+      "VIRTUAL": {
+        "grades": ["A", "B", "C"],
+        "_comentario": "VIRTUAL opera em todas as grades (moeda atual do usuario)"
+      },
+      "AVAX": {
+        "grades": ["A", "B"],
+        "_comentario": "AVAX TESTE: so grades A/B (contexto multi-TF alinhado). Mais volatil, filtro mais rigoroso."
+      },
+      "NEAR": {
+        "grades": ["A", "B"],
+        "_comentario": "NEAR TESTE: so grades A/B (contexto multi-TF alinhado). Mais volatil, filtro mais rigoroso."
+      }
+    },
+    "_comentario_moedas_config": "Config POR MOEDA. 'grades' define quais grades cada moeda aceita. Se a moeda nao estiver aqui, usa 'grades_permitidas' global como fallback. Permite testar moedas volateis com filtros mais conservadores.",
     "timeframes": [
       "5m"
     ],
@@ -155,7 +175,7 @@
       "C"
     ],
     "exigir_grade": true,
-    "_comentario_grade": "Entra em grade A, B ou C. C (contra-tendencia de 1h) so entra com a trava do 1m (grade_c_exige_1m_favor). Sem grade (None) so entra se a REGRA estiver em regras_permitidas.",
+    "_comentario_grade": "Entra em grade A, B ou C. C (contra-tendencia de 1h) so entra com a trava do 1m (grade_c_exige_1m_favor). Sem grade (None) so entra se a REGRA estiver em regras_permitidas. NOTA: se 'moedas_config' definir grades especificas para uma moeda, aquelas tem precedencia.",
     "regras_permitidas": [
       "R6",
       "R7"

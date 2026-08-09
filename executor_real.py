@@ -56,6 +56,7 @@ class ExecutorReal:
         self.moedas: List[str] = [m.upper() for m in cfg.get("moedas", ["VIRTUAL"])]
         self.timeframes: List[str] = list(cfg.get("timeframes", ["5m"]))
         self.grades_permitidas: List[str] = list(cfg.get("grades_permitidas", ["A", "B"]))
+        self.moedas_config: Dict[str, Dict] = cfg.get("moedas_config", {}) or {}
         self.exigir_grade: bool = bool(cfg.get("exigir_grade", True))
         self.max_posicoes: int = int(cfg.get("max_posicoes", 3))
         self.uma_ordem_por_moeda: bool = bool(cfg.get("uma_ordem_por_moeda", True))
@@ -108,6 +109,17 @@ class ExecutorReal:
         if not self.ativa:
             self.log.info("[EXEC-REAL] MASTER SWITCH desligado (ativa=false). "
                           "Nenhuma ordem real será enviada — só sombra.")
+
+    # ------------------------------------------------------------------ #
+    def _grades_permitidas_moeda(self, moeda: str) -> List[str]:
+        """Retorna as grades permitidas para uma moeda específica.
+        Consulta moedas_config primeiro; se não houver config específica,
+        usa grades_permitidas global como fallback."""
+        moeda_u = (moeda or "").upper()
+        cfg_moeda = self.moedas_config.get(moeda_u, {})
+        if cfg_moeda and "grades" in cfg_moeda:
+            return [str(g).upper() for g in cfg_moeda["grades"]]
+        return self.grades_permitidas
 
     # ------------------------------------------------------------------ #
     def _init_client(self):
@@ -231,13 +243,16 @@ class ExecutorReal:
         rel = (rel_1m or "N").upper()
 
         # --- Admissibilidade: por GRADE (A/B/C) OU por REGRA (grade None) ---
+        # Usa grades específicas da moeda (moedas_config) se existir, senão
+        # usa grades_permitidas global.
         if self.exigir_grade:
-            admit_grade = grade in self.grades_permitidas
-            admit_regra = (grade not in self.grades_permitidas
+            grades_moeda = self._grades_permitidas_moeda(moeda)
+            admit_grade = grade in grades_moeda
+            admit_regra = (grade not in grades_moeda
                            and regra_u in self.regras_permitidas)
             if not (admit_grade or admit_regra):
-                return False, (f"grade {grade} não permitida (só "
-                               f"{self.grades_permitidas}) e regra {regra_u} "
+                return False, (f"grade {grade} não permitida para {moeda} (só "
+                               f"{grades_moeda}) e regra {regra_u} "
                                f"fora de {self.regras_permitidas}")
         else:
             admit_regra = False
