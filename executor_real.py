@@ -55,6 +55,12 @@ class ExecutorReal:
         # ---- Guardas ----------------------------------------------------
         self.moedas: List[str] = [m.upper() for m in cfg.get("moedas", ["VIRTUAL"])]
         self.timeframes: List[str] = list(cfg.get("timeframes", ["5m"]))
+        # Filtro MOEDA × TF: permite restringir quais moedas operam em qual TF.
+        # Ex.: {"1m": ["VIRTUAL","SOL","NEAR"], "5m": [...7 moedas...]}.
+        # Se um TF não estiver na lista, usa self.moedas (todas).
+        self.moedas_por_tf: Dict[str, List[str]] = {}
+        for tf, lst in (cfg.get("moedas_por_tf") or {}).items():
+            self.moedas_por_tf[tf] = [m.upper() for m in (lst or [])]
         self.grades_permitidas: List[str] = list(cfg.get("grades_permitidas", ["A", "B"]))
         self.moedas_config: Dict[str, Dict] = cfg.get("moedas_config", {}) or {}
         self.exigir_grade: bool = bool(cfg.get("exigir_grade", True))
@@ -236,6 +242,10 @@ class ExecutorReal:
             return False, f"moeda {moeda} fora da lista permitida {self.moedas}"
         if tf not in self.timeframes:
             return False, f"tf {tf} fora da lista permitida {self.timeframes}"
+        # Filtro MOEDA × TF: se o TF tem lista específica, checa se a moeda está nela.
+        if tf in self.moedas_por_tf:
+            if moeda not in self.moedas_por_tf[tf]:
+                return False, f"moeda {moeda} não permitida no tf {tf} (permitidas: {self.moedas_por_tf[tf]})"
         if action not in ("buy", "sell"):
             return False, f"action inválida: {action}"
 
@@ -380,6 +390,7 @@ class ExecutorReal:
             "erro_init": self.erro_init,
             "moedas": self.moedas,
             "timeframes": self.timeframes,
+            "moedas_por_tf": self.moedas_por_tf,
             "grades_permitidas": self.grades_permitidas,
             "regras_permitidas": self.regras_permitidas,
             "exigir_grade": self.exigir_grade,

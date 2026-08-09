@@ -177,10 +177,17 @@
       "APT",
       "BNB"
     ],
-    "_comentario_moedas": "7 moedas (BTC/ETH removidos). Todas operam grades A/B/C. Grade C usa TP/SL reduzido (defensivo).",
+    "_comentario_moedas": "7 moedas. Todas operam no 5m. Apenas 3 (VIRTUAL/SOL/NEAR) operam no 1m (veja moedas_por_tf).",
     "timeframes": [
+      "1m",
       "5m"
     ],
+    "_comentario_timeframes": "1m E 5m. Mas cada moeda opera TFs especificos (moedas_por_tf).",
+    "moedas_por_tf": {
+      "1m": ["VIRTUAL", "SOL", "NEAR"],
+      "5m": ["SOL", "VIRTUAL", "AVAX", "NEAR", "LINK", "APT", "BNB"]
+    },
+    "_comentario_moedas_por_tf": "FILTRO POR TIMEFRAME. 1m = so 3 moedas (teste). 5m = todas as 7 (producao estavel). O executor checa isso antes de abrir ordem real.",
     "grades_permitidas": [
       "A",
       "B",
@@ -194,7 +201,7 @@
     ],
     "_comentario_regras": "Libera entradas boas que caem em grade None. R6=5m+1h a favor/15m neutro; R7=so 5m a favor (15m/1h neutros). Opcoes extras: R5 (5m neutro, 15m+1h a favor), R8 (so 15m a favor), R9 (conflito 5mx1h com VWAP a favor). NAO recomendado R3 (fallback).",
     "max_posicoes": 7,
-    "_comentario_max_posicoes": "Maximo de 7 posicoes SIMULTANEAS (7 moedas × $50 = $350 usado, buffer $10).",
+    "_comentario_max_posicoes": "Maximo de 7 posicoes SIMULTANEAS (limite de risco: 7 × $50 = $350). Com uma_ordem_por_moeda=true, cada moeda abre SO 1 posicao (ou 1m ou 5m, nao ambos). Maximo real: as 7 moedas abertas = $350 usado, buffer $16.",
     "uma_ordem_por_moeda": true,
     "margem_usdt": 50,
     "_comentario_margem": "$50 por ordem (reduzido de $70 para permitir mais posicoes simultaneas com capital expandido).",
