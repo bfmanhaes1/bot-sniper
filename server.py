@@ -555,13 +555,29 @@ def limpar_logs():
 
 @app.route("/resumo", methods=["GET"])
 def resumo():
+    """Resumo diário em HTML (Telegram format).
+    
+    Query params:
+        dia: YYYY-MM-DD (default: hoje UTC)
+        enviar: "1" para forçar envio ao Telegram
+        formato: "telegram" (default, HTML) ou "texto" (markdown simples)
+    """
     dia = request.args.get("dia")
-    texto = controller.gerar_resumo_diario(dia)
-    enviado = None
-    if request.args.get("enviar") == "1":
-        enviado = notifier.notify_daily_summary(texto)
-    return jsonify({"dia": dia or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                    "resumo_html": texto, "enviado_telegram": enviado})
+    formato = request.args.get("formato", "telegram")
+    
+    if formato == "texto":
+        # Resumo simples em markdown (para leitura no browser)
+        from resumo_diario import gerar_resumo
+        texto = gerar_resumo(data=dia, output="texto")
+        return f"<pre>{texto}</pre>", 200, {"Content-Type": "text/html; charset=utf-8"}
+    else:
+        # Resumo HTML (para Telegram)
+        texto = controller.gerar_resumo_diario(dia)
+        enviado = None
+        if request.args.get("enviar") == "1":
+            enviado = notifier.notify_daily_summary(texto)
+        return jsonify({"dia": dia or datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        "resumo_html": texto, "enviado_telegram": enviado})
 
 
 @app.route("/webhook/<moeda>", methods=["POST"])

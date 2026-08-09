@@ -1113,10 +1113,14 @@ class CryptoShadowController:
 
         # Sinais por moeda (conta eventos ENTRADA/ANALISE/AGUARDAR como atividade)
         por_moeda: Dict[str, int] = {}
+        por_tf: Dict[str, int] = {}  # Breakdown por timeframe (PEDIDO USUÁRIO)
         for r in regs:
             if r.get("evento") in ("ENTRADA", "ANALISE", "AGUARDAR"):
                 m = r.get("moeda", "?")
                 por_moeda[m] = por_moeda.get(m, 0) + 1
+            if r.get("evento") == "ENTRADA":
+                tf = r.get("timeframe", "?")
+                por_tf[tf] = por_tf.get(tf, 0) + 1
 
         # Performance simulada (usa saídas; agrega P&L por alavancagem)
         wins = losses = 0
@@ -1176,18 +1180,36 @@ class CryptoShadowController:
         except ValueError:
             data_fmt = dia
 
+        # Posições reais abertas (do executor real)
+        reais_abertas = 0
+        if self.executor_real and hasattr(self.executor_real, '_posicoes'):
+            try:
+                with self.executor_real._lock:
+                    reais_abertas = len(self.executor_real._posicoes)
+            except Exception:  # noqa: BLE001
+                pass
+        
         linhas = [
-            f"🕶️ <b>RESUMO DIÁRIO — Modo Sombra Crypto</b>",
+            f"🕶️ <b>RESUMO DIÁRIO — BOT-SNIPER</b>",
             f"📅 {data_fmt} (UTC)\n",
             f"📊 <b>Atividade</b>",
             f"• Sinais TSTS recebidos: {total_sinais}",
             f"• Entradas simuladas: {len(entradas) // max(len(self.alavancagens),1)}",
             f"• Análises (1º/2º cruz.): {len(analises)}",
             f"• Sinais aguardando RSI: {len(aguardar)}",
-            f"• Trades simulados fechados: {trades_fechados}\n",
-            f"📈 <b>Performance simulada</b>",
-            f"• Vitórias/Derrotas: {wins}/{losses} (WR {wr:.1f}%)",
+            f"• Trades simulados fechados: {trades_fechados}",
+            f"• 💰 <b>Posições REAIS abertas: {reais_abertas}</b>\n",
+            f"⏱️ <b>Por Timeframe</b>",
         ]
+        if por_tf:
+            for tf, count in sorted(por_tf.items()):
+                linhas.append(f"• {tf}: {count} entradas")
+        else:
+            linhas.append("• (nenhuma entrada hoje)")
+        linhas.extend([
+            f"\n📈 <b>Performance simulada</b>",
+            f"• Vitórias/Derrotas: {wins}/{losses} (WR {wr:.1f}%)",
+        ])
         for tag, v in pnl_total.items():
             emoji = "🟢" if v >= 0 else "🔴"
             linhas.append(f"• P&L {tag}: {emoji} ${v:,.2f}")
