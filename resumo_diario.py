@@ -7,34 +7,62 @@ Processa logs shadow + posições reais e gera relatório diário:
 - Win rate (%)
 - P&L total
 - Losses e gains
+
+Backend de dados:
+- PRIMÁRIO: PostgreSQL (tabela estudo_tpsl via DATABASE_URL) — dados persistem.
+- FALLBACK: Arquivos JSON locais (crypto2_logs/) — efêmeros no Railway.
 """
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from collections import defaultdict
 
 # ------------------------------------------------------------------ #
-# Paths
+# Paths e imports
 # ------------------------------------------------------------------ #
 BASE_DIR = Path(__file__).parent
 LOGS_DIR = BASE_DIR / "crypto2_logs"
 POSICOES_FILE = BASE_DIR / "execucao_real_posicoes.json"
 
+# Tenta importar crypto_logger (para acesso ao PostgreSQL)
+try:
+    import sys
+    if str(BASE_DIR) not in sys.path:
+        sys.path.insert(0, str(BASE_DIR))
+    import crypto_logger
+    HAS_CRYPTO_LOGGER = True
+except ImportError:
+    HAS_CRYPTO_LOGGER = False
+    crypto_logger = None
+
 
 def ler_logs_dia(data: str = None) -> List[Dict[str, Any]]:
-    """Lê o arquivo de logs JSON do dia (formato crypto_YYYY-MM-DD.json).
+    """Lê eventos do dia (PostgreSQL primário, arquivos JSON fallback).
     
     Args:
         data: YYYY-MM-DD. Se None, usa hoje (UTC).
     
     Returns:
         Lista de eventos (ENTRADA, SAIDA, etc).
+    
+    Backend:
+        Usa crypto_logger.ler_dia() que automaticamente:
+        1. Tenta PostgreSQL (tabela crypto_eventos) — dados permanentes
+        2. Fallback para arquivos JSON se PostgreSQL indisponível
     """
     if data is None:
         data = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
+    # Usa crypto_logger se disponível (lê de PostgreSQL + fallback JSON)
+    if HAS_CRYPTO_LOGGER and crypto_logger:
+        try:
+            return crypto_logger.ler_dia(data)
+        except Exception as e:
+            print(f"Erro ao ler via crypto_logger: {e}")
+    
+    # Fallback manual se crypto_logger não disponível
     log_file = LOGS_DIR / f"crypto_{data}.json"
     if not log_file.exists():
         return []

@@ -75,8 +75,9 @@ DATABASE_URL = (
     or ""
 ).strip()
 
-# Nome da tabela do livro-razão (append-only) no Postgres.
+# Nome das tabelas no Postgres.
 ESTUDO_TABELA = os.environ.get("ESTUDO_TABELA", "estudo_tpsl")
+EVENTOS_TABELA = os.environ.get("EVENTOS_TABELA", "crypto_eventos")  # eventos diários (ENTRADA/SAIDA/etc)
 
 _USE_PG = False
 _psycopg2 = None
@@ -343,6 +344,25 @@ def registrar(evento: str, dados: Dict[str, Any]) -> Dict[str, Any]:
         if k not in reg:
             reg[k] = v
 
+    # ------------------------------------------------------------------ #
+    # PERSISTÊNCIA DUPLA: PostgreSQL (primário) + arquivos JSON (backup)
+    # ------------------------------------------------------------------ #
+    # Tenta gravar no PostgreSQL primeiro (dados permanentes no Railway).
+    # Se falhar ou não tiver DATABASE_URL, cai para arquivos JSON.
+    if _USE_PG and _pg_init():
+        try:
+            _pg_exec(
+                f"INSERT INTO {EVENTOS_TABELA} "
+                f"(data, hora, evento, moeda, timeframe, payload) "
+                f"VALUES (%s, %s, %s, %s, %s, %s::jsonb)",
+                (reg.get("data"), reg.get("hora"), evento,
+                 reg.get("moeda"), reg.get("timeframe"),
+                 json.dumps(reg, ensure_ascii=False)),
+            )
+            # Sucesso no PostgreSQL — arquivos JSON viram backup opcional
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Falha ao gravar evento no Postgres (%s) — usando JSON.", exc)
+
     caminho_json = _arquivo_json(agora)
     caminho_md = _arquivo_md(agora)
     try:
@@ -371,9 +391,38 @@ def registrar(evento: str, dados: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def ler_dia(dia: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Lê os registros de um dia (AAAA-MM-DD). Sem argumento = hoje (UTC)."""
+    """Lê os registros de um dia (AAAA-MM-DD). Sem argumento = hoje (UTC).
+    
+    Backend:
+    - PRIMÁRIO: PostgreSQL (tabela crypto_eventos) quando DATABASE_URL existe.
+    - FALLBACK: Arquivo JSON local (crypto2_logs/crypto_YYYY-MM-DD.json).
+    """
     if dia is None:
         dia = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    
+    # Tenta PostgreSQL primeiro
+    if _USE_PG and _pg_init():
+        try:
+            rows = _pg_exec(
+                f"SELECT payload FROM {EVENTOS_TABELA} WHERE data = %s ORDER BY id",
+                (dia,), fetch="all") or []
+            # Decodifica JSONB -> dict
+            eventos: List[Dict[str, Any]] = []
+            for r in rows:
+                p = r[0]
+                if isinstance(p, str):
+                    try:
+                        p = json.loads(p)
+                    except ValueError:
+                        continue
+                if isinstance(p, dict):
+                    eventos.append(p)
+            if eventos:  # Se achou no PostgreSQL, retorna
+                return eventos
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Falha ao ler eventos do Postgres (%s) — fallback JSON.", exc)
+    
+    # Fallback: arquivo JSON local
     caminho = os.path.join(LOG_DIR, f"crypto_{dia}.json")
     if not os.path.exists(caminho):
         return []
