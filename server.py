@@ -450,6 +450,14 @@ def diag():
         },
         "confirmacao": controller.confirm.snapshot() if getattr(controller, "confirm", None) else None,
         "catalyst": controller.catalyst.snapshot() if getattr(controller, "catalyst", None) else None,
+        "timeframes": controller.timeframes,
+        "reconciliacao": {
+            "ativa": getattr(controller, "_reconc_ativa", None),
+            "janela_seg": getattr(controller, "_reconc_janela_seg", None),
+            "permite_real": getattr(controller, "_reconc_permite_real", None),
+            "aguardando_agora": len(getattr(controller, "_reconc", {})),
+            "pendentes": list(getattr(controller, "_reconc", {}).keys()),
+        },
         "estudo_tpsl": {
             "ativa": getattr(controller, "estudo_ativa", None),
             "janela_min_por_tf": getattr(controller, "estudo_janela_min", {}),
