@@ -151,6 +151,7 @@ class CatalystStore:
         # Campos DIRECIONAIS (BULL/BEAR/NEUT): timeframes + VWAP.
         apelidos_dir = {
             "c30s": "c30s", "30s": "c30s", "s30": "c30s", "tf30s": "c30s",
+            "c45s": "c45s", "45s": "c45s", "s45": "c45s", "tf45s": "c45s",
             "c1m": "c1m", "1m": "c1m", "m1": "c1m", "tf1m": "c1m",
             "c5m": "c5m", "5m": "c5m", "m5": "c5m", "tf5m": "c5m",
             "c15m": "c15m", "15m": "c15m", "m15": "c15m", "tf15m": "c15m",
@@ -174,7 +175,7 @@ class CatalystStore:
                 achou["pullback"] = normalizar_pullback(v)
         if not achou:
             return {"ok": False,
-                    "error": "sem c30s/c1m/c5m/c15m/c1h/vwap/market/pullback "
+                    "error": "sem c30s/c45s/c1m/c5m/c15m/c1h/vwap/market/pullback "
                              "no payload (ignorado)"}
         chave = self._chave(moeda)
         with self._lock:
@@ -182,7 +183,7 @@ class CatalystStore:
             reg.update(achou)
             reg["ts"] = time.time()
             self._estado[chave] = reg
-        campos = ("c30s", "c1m", "c5m", "c15m", "c1h", "c2h", "c4h",
+        campos = ("c30s", "c45s", "c1m", "c5m", "c15m", "c1h", "c2h", "c4h",
                   "vwap", "market", "pullback")
         logger.info("Catalisador %s: %s", chave,
                     {k: reg.get(k) for k in campos})
@@ -219,7 +220,7 @@ class CatalystStore:
         idade = agora - float(st.get("ts", 0)) if st else None
 
         # --- Frescor / LEGADO -----------------------------------------
-        campos_estado = ("c30s", "c1m", "c5m", "c15m", "c1h", "c2h", "c4h",
+        campos_estado = ("c30s", "c45s", "c1m", "c5m", "c15m", "c1h", "c2h", "c4h",
                          "vwap", "market", "pullback")
         if not st or idade is None or idade > self.stale_segundos:
             base = {"ativa": True, "moeda": self._chave(moeda), "action": action,
@@ -234,6 +235,7 @@ class CatalystStore:
             return True, base
 
         c30s = st.get("c30s", "NEUT")
+        c45s = st.get("c45s", "NEUT")
         c1m = st.get("c1m", "NEUT")
         c5m = st.get("c5m", "NEUT")
         c15 = st.get("c15m", "NEUT")
@@ -244,6 +246,7 @@ class CatalystStore:
         market = normalizar_market(st.get("market"))
         pullback = normalizar_pullback(st.get("pullback"))
         r30 = self._rel(c30s, alvo)
+        r45 = self._rel(c45s, alvo)
         r1m = self._rel(c1m, alvo)
         r5 = self._rel(c5m, alvo)
         r15 = self._rel(c15, alvo)
@@ -271,11 +274,11 @@ class CatalystStore:
                 "moeda": self._chave(moeda), "action": action, "alvo": alvo,
                 "grade": grade,
                 "market": market, "pullback": pullback,
-                "estado": {"c30s": c30s, "c1m": c1m, "c5m": c5m, "c15m": c15,
-                           "c1h": c1h, "c2h": c2h, "c4h": c4h, "vwap": vwap,
-                           "market": market, "pullback": pullback},
-                "relativo": {"c30s": r30, "c1m": r1m, "c5m": r5, "c15m": r15,
-                             "c1h": r1, "c2h": r2h, "c4h": r4h,
+                "estado": {"c30s": c30s, "c45s": c45s, "c1m": c1m, "c5m": c5m,
+                           "c15m": c15, "c1h": c1h, "c2h": c2h, "c4h": c4h,
+                           "vwap": vwap, "market": market, "pullback": pullback},
+                "relativo": {"c30s": r30, "c45s": r45, "c1m": r1m, "c5m": r5,
+                             "c15m": r15, "c1h": r1, "c2h": r2h, "c4h": r4h,
                              "vwap": vw, "pullback": rpb},
                 "idade_seg": round(idade, 1),
             }

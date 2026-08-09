@@ -248,6 +248,19 @@ class CryptoShadowController:
         # ENTRA/ESPERA. Filtro puro (config "catalyst").
         self.catalyst = CatalystStore(config)
 
+        # ---- RECONCILIAÇÃO gatilho x catalisador (mata a race condition) ----
+        # Quando um gatilho (RSI/Sniper) é BLOQUEADO pelo catalisador porque este
+        # ainda não virou a favor, guardamos o gatilho por 'janela_seg' segundos.
+        # Assim que o catalisador da moeda ATUALIZAR (webhook /catalyst), o bot
+        # REAVALIA os gatilhos guardados e, se o gate liberar, ENTRA (medindo a
+        # DEFASAGEM). Por padrão fica SÓ NA SOMBRA (permite_real=false).
+        _rec = config.get("reconciliacao", {}) or {}
+        self._reconc_ativa: bool = bool(_rec.get("ativa", False))
+        self._reconc_janela_seg: float = float(_rec.get("janela_seg", 20))
+        self._reconc_permite_real: bool = bool(_rec.get("permite_real", False))
+        # chave "MOEDA_TF_ACTION" -> dict com o gatilho guardado
+        self._reconc: Dict[str, Dict[str, Any]] = {}
+
         # Camada de EXECUÇÃO REAL (dinheiro real na Bitget). Roda EM PARALELO à
         # sombra. MASTER SWITCH em config["execucao_real"]["ativa"] (padrão OFF).
         # Se qualquer coisa falhar aqui, a sombra continua normalmente.
@@ -310,7 +323,18 @@ class CryptoShadowController:
             return {"ok": False,
                     "error": "moeda ausente (informe na URL ou no campo "
                              "'moeda'/'ticker' do JSON)"}
-        return self.catalyst.atualizar(coin, data)
+        res = self.catalyst.atualizar(coin, data)
+        # RECONCILIAÇÃO: o catalisador acabou de ATUALIZAR — reavalia os gatilhos
+        # que foram bloqueados e estão aguardando na janela (mata a race condition).
+        if res.get("ok") and self._reconc_ativa:
+            try:
+                reconc = self._reavaliar_reconciliacao(coin)
+                if reconc:
+                    res["reconciliacao"] = reconc
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[RECONC] erro ao reavaliar %s (segue normal): %s",
+                             coin, exc)
+        return res
 
     def _checar_gates(self, moeda: str, tf: str, action: str) -> Tuple[bool, Dict[str, Any]]:
         """
@@ -333,6 +357,116 @@ class CryptoShadowController:
                 return False, det
             return True, {**det, "gate": "catalyst"}
         return True, {"ok": True, "motivo": "sem gate ativo", "gate": None}
+
+    # ------------------------------------------------------------------ #
+    def _guardar_reconciliacao(self, moeda: str, tf: str, action: str,
+                               sinal_txt: str, rsi: Optional[float],
+                               cruzamento: int, origem: str, direction: str,
+                               det_gate: Dict[str, Any]) -> None:
+        """
+        Guarda um gatilho que foi BLOQUEADO pelo catalisador, para reavaliar
+        quando o catalisador da moeda atualizar (dentro da janela). Grava o
+        instrumento RACE_CANDIDATO para medir a defasagem gatilho x catalisador.
+        """
+        chave = f"{moeda}_{tf}_{action}"
+        agora = time.time()
+        pend = {
+            "ts": agora, "moeda": moeda, "tf": tf, "action": action,
+            "sinal_txt": sinal_txt, "rsi": rsi, "cruzamento": cruzamento,
+            "origem": origem, "direction": direction,
+            "motivo_bloqueio": det_gate.get("motivo"),
+            "regra_bloqueio": det_gate.get("regra"),
+        }
+        with self._lock:
+            self._reconc[chave] = pend
+        crypto_logger.registrar("RACE_CANDIDATO", {
+            "moeda": moeda, "timeframe": tf, "alavancagem": None,
+            "sinal_tsts": sinal_txt, "rsi_valor": rsi,
+            "cruzamento_numero": cruzamento,
+            "decisao_agente": "reconciliacao_aguardando",
+            "direcao": action, "origem": origem,
+            "motivo": det_gate.get("motivo"), "regra": det_gate.get("regra"),
+            "janela_seg": self._reconc_janela_seg,
+        })
+        logger.info("[RECONC] %s %s %s guardado p/ reavaliar (janela %.0fs)",
+                    moeda, tf, action, self._reconc_janela_seg)
+
+    def _reavaliar_reconciliacao(self, moeda: str) -> List[Dict[str, Any]]:
+        """
+        Chamado quando o catalisador de `moeda` ATUALIZA. Percorre os gatilhos
+        guardados dessa moeda: expira os que passaram da janela (RACE_EXPIRADO)
+        e, para os demais, reavalia o gate — se agora LIBERAR, ENTRA (na sombra;
+        vira real só se reconciliacao.permite_real=true) e mede a DEFASAGEM.
+        """
+        agora = time.time()
+        resultados: List[Dict[str, Any]] = []
+        with self._lock:
+            chaves = [k for k, v in self._reconc.items() if v.get("moeda") == moeda]
+        for chave in chaves:
+            with self._lock:
+                pend = self._reconc.get(chave)
+            if not pend:
+                continue
+            idade = agora - float(pend["ts"])
+            tf = pend["tf"]; action = pend["action"]
+            # 1) Expirou a janela? descarta.
+            if idade > self._reconc_janela_seg:
+                with self._lock:
+                    self._reconc.pop(chave, None)
+                crypto_logger.registrar("RACE_EXPIRADO", {
+                    "moeda": moeda, "timeframe": tf, "alavancagem": None,
+                    "sinal_tsts": pend.get("sinal_txt"), "rsi_valor": pend.get("rsi"),
+                    "cruzamento_numero": pend.get("cruzamento"),
+                    "decisao_agente": "reconciliacao_expirada",
+                    "direcao": action, "defasagem_seg": round(idade, 2),
+                    "janela_seg": self._reconc_janela_seg,
+                    "motivo": "catalisador nao virou a favor dentro da janela",
+                })
+                logger.info("[RECONC] %s %s %s EXPIRADO (%.1fs > %.0fs)",
+                            moeda, tf, action, idade, self._reconc_janela_seg)
+                continue
+            # 2) Ainda na janela: reavalia o gate agora que o catalisador mudou.
+            ok_gate, det_gate = self._checar_gates(moeda, tf, action)
+            if not ok_gate:
+                # continua aguardando (pode virar a favor num próximo update)
+                continue
+            # 3) LIBEROU -> entra (mede a defasagem). Preço fresco.
+            entry = self._preco_publico(moeda)
+            with self._lock:
+                self._reconc.pop(chave, None)
+            if not entry or entry <= 0:
+                crypto_logger.registrar("RACE_EXPIRADO", {
+                    "moeda": moeda, "timeframe": tf, "alavancagem": None,
+                    "sinal_tsts": pend.get("sinal_txt"), "rsi_valor": pend.get("rsi"),
+                    "cruzamento_numero": pend.get("cruzamento"),
+                    "decisao_agente": "reconciliacao_sem_preco",
+                    "direcao": action, "defasagem_seg": round(idade, 2),
+                    "motivo": "gate liberou mas sem preco para simular",
+                })
+                continue
+            n = pend.get("cruzamento") or 1
+            self._abrir_simulacao(
+                moeda, tf, action, entry, n, pend.get("sinal_txt"),
+                pend.get("rsi"), det_gate.get("grade"), det_gate.get("regra"),
+                ctx_catalyst=det_gate, permitir_real=self._reconc_permite_real)
+            crypto_logger.registrar("RECONCILIADO", {
+                "moeda": moeda, "timeframe": tf, "alavancagem": None,
+                "sinal_tsts": pend.get("sinal_txt"), "rsi_valor": pend.get("rsi"),
+                "cruzamento_numero": n,
+                "decisao_agente": "reconciliado_entrou",
+                "direcao": action, "preco_entrada_simulado": entry,
+                "defasagem_seg": round(idade, 2),
+                "grade": det_gate.get("grade"), "regra": det_gate.get("regra"),
+                "permitiu_real": self._reconc_permite_real,
+                "gate": det_gate.get("gate"), "catalyst": det_gate,
+            })
+            logger.info("[RECONC] %s %s %s RECONCILIADO em %.1fs (defasagem) "
+                        "grade=%s regra=%s real=%s", moeda, tf, action, idade,
+                        det_gate.get("grade"), det_gate.get("regra"),
+                        self._reconc_permite_real)
+            resultados.append({"chave": chave, "defasagem_seg": round(idade, 2),
+                               "grade": det_gate.get("grade")})
+        return resultados
 
     # ------------------------------------------------------------------ #
     def _engine(self, moeda: str, tf: str) -> DecisionEngine:
@@ -503,8 +637,14 @@ class CryptoShadowController:
     def _abrir_simulacao(self, moeda: str, tf: str, action: str, entry: float,
                          cruzamento: int, sinal_tsts: str, rsi: Optional[float],
                          grade: Optional[str] = None, regra: Optional[str] = None,
-                         ctx_catalyst: Optional[Dict[str, Any]] = None):
-        """Abre uma posição simulada e registra ENTRADA para cada alavancagem."""
+                         ctx_catalyst: Optional[Dict[str, Any]] = None,
+                         permitir_real: bool = True):
+        """Abre uma posição simulada e registra ENTRADA para cada alavancagem.
+
+        `permitir_real`: quando False, a entrada fica SÓ NA SOMBRA (não chama o
+        executor real). Usado pela RECONCILIAÇÃO gatilho x catalisador, que por
+        padrão mede em sombra (config reconciliacao.permite_real=false).
+        """
         tp, sl = self._tp_sl(action, entry, tf, grade)
         chave = f"{moeda}_{tf}"
         with self._lock:
@@ -540,7 +680,7 @@ class CryptoShadowController:
         # --- EXECUÇÃO REAL (paralela à sombra) --------------------------
         # Só age se o MASTER SWITCH estiver ligado (config execucao_real.ativa).
         # Todas as guardas (moeda/tf/grade/limite de posições) ficam no executor.
-        if getattr(self, "executor_real", None) is not None:
+        if getattr(self, "executor_real", None) is not None and permitir_real:
             try:
                 # micro-tendência do 1m relativa ao sinal (FAVOR/CONTRA/N),
                 # vinda do detalhe do catalisador (relativo.c1m).
@@ -820,6 +960,13 @@ class CryptoShadowController:
                 logger.info("%s %s: entrada BLOQUEADA pelo %s (%s) — %s",
                             moeda, tf, det_gate.get("gate"),
                             det_gate.get("regra"), det_gate.get("motivo"))
+                # RECONCILIAÇÃO: se foi o CATALISADOR que bloqueou e a janela está
+                # ativa, GUARDA o gatilho para reavaliar quando o catalisador da
+                # moeda atualizar (mata a race condition gatilho x catalisador).
+                if self._reconc_ativa and det_gate.get("gate") == "catalyst":
+                    self._guardar_reconciliacao(
+                        moeda, tf, (action or "").lower(), sinal_txt, rsi,
+                        cruzamento or 1, origem, direction, det_gate)
                 return {"ok": True, "decisao": "bloqueado_catalisador",
                         "cruzamento": cruzamento or 1, "detalhe": det_gate}
 
@@ -868,6 +1015,11 @@ class CryptoShadowController:
                         "gate": det_gate.get("gate"),
                         "catalyst": det_gate,
                     })
+                    # RECONCILIAÇÃO também no modo análise (mesma race condition).
+                    if self._reconc_ativa and det_gate.get("gate") == "catalyst":
+                        self._guardar_reconciliacao(
+                            moeda, tf, (action or "").lower(), sinal_txt, rsi,
+                            n, origem, direction, det_gate)
                     return {"ok": True, "decisao": "bloqueado_catalisador",
                             "analise": True, "cruzamento": n,
                             "detalhe": det_gate}
@@ -1096,6 +1248,13 @@ class CryptoShadowController:
             },
             "confirmacao": self.confirm.snapshot() if getattr(self, "confirm", None) else None,
             "catalyst": self.catalyst.snapshot() if getattr(self, "catalyst", None) else None,
+            "reconciliacao": {
+                "ativa": self._reconc_ativa,
+                "janela_seg": self._reconc_janela_seg,
+                "permite_real": self._reconc_permite_real,
+                "aguardando_agora": len(self._reconc),
+                "pendentes": list(self._reconc.keys()),
+            },
         }
 
 

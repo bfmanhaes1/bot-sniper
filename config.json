@@ -39,11 +39,13 @@
   ],
   "_comentario_moedas": "10 moedas monitoradas. APT = Aptos (o pedido citava 'APTO', interpretado como APT/Aptos).",
   "timeframes": [
+    "30s",
+    "45s",
     "1m",
     "5m",
     "15m"
   ],
-  "_comentario_timeframes": "3 timeframes por moeda.",
+  "_comentario_timeframes": "Timeframes por moeda monitorados na SOMBRA. 30s/45s adicionados para o estudo da CASCATA (30s->45s->1m->5m) e da reconciliacao gatilho x catalisador. IMPORTANTE: a execucao REAL segue restrita a execucao_real.timeframes (5m). 30s/45s/1m so geram simulacao/estudo em sombra.",
   "alavancagens": [
     5,
     10
@@ -74,6 +76,16 @@
   },
   "simulacao_por_tf": {
     "_comentario": "TP/SL calibrados POR TIMEFRAME com MARGEM PARA TAXAS (0.12% Bitget). Valores ja consideram custo de entrada+saida. Se um TF nao estiver aqui, o motor usa o tp_percent/sl_percent global de 'simulacao'. Valores em % sobre o preco de entrada.",
+    "30s": {
+      "tp_percent": 0.4,
+      "sl_percent": 0.5,
+      "_perfil": "micro-scalp (SOMBRA/estudo da cascata). TP real apos taxas: 0.28%. Ponto de partida — sera calibrado com o MFE/DD reais coletados."
+    },
+    "45s": {
+      "tp_percent": 0.4,
+      "sl_percent": 0.5,
+      "_perfil": "micro-scalp (SOMBRA/estudo da cascata). TP real apos taxas: 0.28%. Ponto de partida — sera calibrado com o MFE/DD reais coletados."
+    },
     "1m": {
       "tp_percent": 0.5,
       "sl_percent": 0.6,
@@ -103,10 +115,12 @@
     "_comentario": "ESTUDO FORCADO de TP/SL. Para calibrar TP e SL SEM vies, o bot OBSERVA cada entrada simulada por uma JANELA FIXA completa e NAO para no TP/SL: mede o quanto o preco REALMENTE andou a favor (MFE) e contra (DD/MAE) e grava 1 linha por entrada num livro-razao DURAVEL (estudo_tpsl.jsonl). Com esses numeros voce escolhe o TP perto do MFE tipico e o SL um pouco alem do DD tipico. Se ativa=false, volta ao comportamento antigo (fecha no toque do TP/SL).",
     "ativa": true,
     "janela_min_por_tf": {
+      "30s": 15,
+      "45s": 20,
       "1m": 30,
       "5m": 120,
       "15m": 360,
-      "_comentario": "Quantos MINUTOS observar cada entrada antes de gravar o MFE/DD e encerrar o estudo. Deve cobrir o tempo tipico de um trade naquele timeframe (1m -> 30min, 5m -> 2h, 15m -> 6h)."
+      "_comentario": "Quantos MINUTOS observar cada entrada antes de gravar o MFE/DD e encerrar o estudo. Deve cobrir o tempo tipico de um trade naquele timeframe (30s -> 15min, 45s -> 20min, 1m -> 30min, 5m -> 2h, 15m -> 6h)."
     },
     "janela_min_default": 240,
     "_comentario_default": "Janela usada para um timeframe que nao esteja listado acima."
@@ -140,6 +154,14 @@
     "_comentario_timing": "REGRA V2. true = afina o gatilho pelos timeframes rapidos: se 30s E 1m estiverem AMBOS contra o sinal, espera a retomada. false = ignora 30s/1m. Precisa que o alerta envie os campos 'c30s' e 'c1m'.",
     "bloquear_contra_macro": false,
     "_comentario_macro": "FILTRO MACRO (para SCALPING no 5m). true = usa o contexto de 2h e 4h como tendencia-mae: se TODOS os TFs macro decididos (c2h/c4h) estiverem CONTRA o sinal, BLOQUEIA (evita scalp contra a tendencia maior). false = ignora 2h/4h. Precisa que o alerta envie 'c2h' e/ou 'c4h'. Recomendado LIGAR quando operar 5m; deixe false no 1m."
+  },
+  "reconciliacao": {
+    "_comentario": "JANELA DE RECONCILIACAO gatilho x catalisador (mata a 'race condition'). PROBLEMA: o gatilho (RSI/Sniper) e o catalisador chegam como webhooks SEPARADOS, com latencias diferentes. Se o gatilho chega ANTES do catalisador virar a favor, o gate BLOQUEIA e a boa entrada e perdida — ninguem reavalia quando o catalisador atualiza. SOLUCAO: quando um gatilho e bloqueado pelo catalisador, o bot GUARDA o gatilho por 'janela_seg' segundos; assim que o catalisador da moeda ATUALIZAR (webhook /catalyst), o bot REAVALIA os gatilhos guardados e, se agora o gate liberar, ENTRA. Mede tambem a DEFASAGEM em segundos (instrumentacao RACE_CANDIDATO/RECONCILIADO/RACE_EXPIRADO nos logs).",
+    "ativa": true,
+    "janela_seg": 20,
+    "_comentario_janela": "Por quantos segundos um gatilho bloqueado fica aguardando o catalisador virar a favor. Passou disso sem reconciliar -> descartado (log RACE_EXPIRADO). 20s cobre a defasagem tipica entre os webhooks; aumente se observar defasagens maiores nos logs.",
+    "permite_real": false,
+    "_comentario_permite_real": "TRAVA DE SEGURANCA. false (padrao) = entradas RECONCILIADAS ficam SO NA SOMBRA (nao chamam o executor real), mesmo no 5m — para MEDIR primeiro quantas boas entradas a reconciliacao recupera, sem risco novo. true = entrada reconciliada tambem pode virar ordem REAL (respeitando execucao_real.timeframes/moedas/grades). So mude para true depois de analisar os dados coletados."
   },
   "execucao_real": {
     "_comentario_execucao_real": "CAMADA DE EXECUCAO REAL (dinheiro de verdade). 'ativa' e o MASTER SWITCH: com false (padrao) NADA executa, o bot segue 100% em sombra. Com 'ativa':true mas 'dry_run':true, as chamadas a Bitget sao SIMULADAS (validacao sem risco). So vira dinheiro real com ativa=true E dry_run=false.",
