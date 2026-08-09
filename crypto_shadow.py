@@ -179,18 +179,15 @@ class CryptoShadowController:
         self.sl_percent: float = float(sim.get("sl_percent", 1.0)) / 100.0
         self.poll_minutes: int = int(sim.get("poll_price_minutes", 5))
 
-        # TP/SL calibrado POR TIMEFRAME (fallback = global acima). Guardado em
-        # fração (0.30% -> 0.0030). Ignora chaves de comentário (_...).
-        self.tp_sl_por_tf: Dict[str, Tuple[float, float]] = {}
+        # TP/SL calibrado POR TIMEFRAME (fallback = global acima).
+        # Agora guarda o dicionário completo (incluindo grade_c se existir).
+        # Ignora chaves de comentário (_...).
+        self.tp_sl_por_tf: Dict[str, Dict] = {}
         for _tf, _cfg in (config.get("simulacao_por_tf") or {}).items():
             if _tf.startswith("_") or not isinstance(_cfg, dict):
                 continue
-            try:
-                _tp = float(_cfg["tp_percent"]) / 100.0
-                _sl = float(_cfg["sl_percent"]) / 100.0
-            except (KeyError, TypeError, ValueError):
-                continue
-            self.tp_sl_por_tf[_tf] = (_tp, _sl)
+            # Guarda o dicionário completo (com tp_percent, sl_percent, grade_c, etc)
+            self.tp_sl_por_tf[_tf] = _cfg
 
         eng = config.get("engine", {})
         # Um motor de decisão por MOEDA+TF (estado de RSI independente).
@@ -450,11 +447,26 @@ class CryptoShadowController:
         return self._preco_publico(moeda)
 
     def _tp_sl(self, action: str, entry: float,
-               tf: Optional[str] = None) -> Tuple[float, float]:
+               tf: Optional[str] = None,
+               grade: Optional[str] = None) -> Tuple[float, float]:
         # Usa TP/SL específico do timeframe se configurado; senão o global.
-        tp_pct, sl_pct = self.tp_sl_por_tf.get(
-            tf, (self.tp_percent, self.sl_percent)
-        )
+        # Se grade == "C" E houver config grade_c para o TF, usa valores reduzidos.
+        cfg_tf = self.tp_sl_por_tf.get(tf, {})
+        
+        if grade == "C" and isinstance(cfg_tf, dict) and "grade_c" in cfg_tf:
+            # Grade C tem TP/SL reduzido (contra-tendência, mais defensivo)
+            cfg_c = cfg_tf["grade_c"]
+            tp_pct = cfg_c.get("tp_percent", self.tp_percent) / 100.0
+            sl_pct = cfg_c.get("sl_percent", self.sl_percent) / 100.0
+        else:
+            # Grades A/B ou sem config específica: usa TP/SL normal do TF
+            if isinstance(cfg_tf, dict):
+                tp_pct = cfg_tf.get("tp_percent", self.tp_percent) / 100.0
+                sl_pct = cfg_tf.get("sl_percent", self.sl_percent) / 100.0
+            else:
+                # cfg_tf era tupla legada (compatibilidade)
+                tp_pct, sl_pct = cfg_tf if cfg_tf else (self.tp_percent / 100.0, self.sl_percent / 100.0)
+        
         if action == "buy":
             return entry * (1 + tp_pct), entry * (1 - sl_pct)
         return entry * (1 - tp_pct), entry * (1 + sl_pct)
@@ -493,7 +505,7 @@ class CryptoShadowController:
                          grade: Optional[str] = None, regra: Optional[str] = None,
                          ctx_catalyst: Optional[Dict[str, Any]] = None):
         """Abre uma posição simulada e registra ENTRADA para cada alavancagem."""
-        tp, sl = self._tp_sl(action, entry, tf)
+        tp, sl = self._tp_sl(action, entry, tf, grade)
         chave = f"{moeda}_{tf}"
         with self._lock:
             # Se já havia uma posição observada nesta chave (ainda no estudo),
@@ -644,8 +656,17 @@ class CryptoShadowController:
             mfe_pct = round(max(mfe_pct, 0.0), 4)
             dd_pct = round(max(dd_pct, 0.0), 4)
             janela_min = round((ate - pos.aberta_em).total_seconds() / 60.0, 1)
-            tp_pct_cfg, sl_pct_cfg = self.tp_sl_por_tf.get(
-                pos.tf, (self.tp_percent, self.sl_percent))
+            
+            # Pega TP/SL configurado (grades A/B usam padrão; grade C usa reduzido)
+            cfg_tf = self.tp_sl_por_tf.get(pos.tf, {})
+            if pos.grade == "C" and isinstance(cfg_tf, dict) and "grade_c" in cfg_tf:
+                tp_pct_cfg = cfg_tf["grade_c"].get("tp_percent", self.tp_percent * 100) / 100.0
+                sl_pct_cfg = cfg_tf["grade_c"].get("sl_percent", self.sl_percent * 100) / 100.0
+            elif isinstance(cfg_tf, dict):
+                tp_pct_cfg = cfg_tf.get("tp_percent", self.tp_percent * 100) / 100.0
+                sl_pct_cfg = cfg_tf.get("sl_percent", self.sl_percent * 100) / 100.0
+            else:
+                tp_pct_cfg, sl_pct_cfg = self.tp_percent, self.sl_percent
             crypto_logger.registrar_estudo({
                 "moeda": pos.moeda, "tf": pos.tf,
                 "direcao": "LONG" if pos.action == "buy" else "SHORT",

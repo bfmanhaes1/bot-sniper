@@ -84,7 +84,13 @@
       "tp_percent": 0.8,
       "sl_percent": 1.1,
       "_perfil": "scalping — TP ajustado (era 0.60) com margem p/ taxas. TP real apos taxas: 0.68%. WR min breakeven: 64.2%. Alav sugerida 5x.",
-      "_base_calibracao": "MFE mediana 0.44% + margem 0.36% (alvo p75 0.81% viavel)"
+      "_base_calibracao": "MFE mediana 0.44% + margem 0.36% (alvo p75 0.81% viavel)",
+      "grade_c": {
+        "tp_percent": 0.5,
+        "sl_percent": 0.7,
+        "_perfil": "scalp DEFENSIVO (grade C = contra-tendencia 1h). TP real apos taxas: 0.38%. WR min breakeven: 58.3%.",
+        "_comentario": "Grade C usa TP/SL reduzido para compensar maior risco da contra-tendencia. Lucro liquido 0.38% apos taxas 0.12% Bitget."
+      }
     },
     "15m": {
       "tp_percent": 1.0,
@@ -144,28 +150,12 @@
       "SOL",
       "VIRTUAL",
       "AVAX",
-      "NEAR"
+      "NEAR",
+      "LINK",
+      "APT",
+      "BNB"
     ],
-    "_comentario_moedas": "BTC e ETH removidos (lentos demais). AVAX e NEAR adicionados (amplitude 4.7%/dia). SOL e VIRTUAL mantidos.",
-    "moedas_config": {
-      "SOL": {
-        "grades": ["A", "B", "C"],
-        "_comentario": "SOL opera em todas as grades (setup completo, moeda principal)"
-      },
-      "VIRTUAL": {
-        "grades": ["A", "B", "C"],
-        "_comentario": "VIRTUAL opera em todas as grades (moeda atual do usuario)"
-      },
-      "AVAX": {
-        "grades": ["A", "B"],
-        "_comentario": "AVAX TESTE: so grades A/B (contexto multi-TF alinhado). Mais volatil, filtro mais rigoroso."
-      },
-      "NEAR": {
-        "grades": ["A", "B"],
-        "_comentario": "NEAR TESTE: so grades A/B (contexto multi-TF alinhado). Mais volatil, filtro mais rigoroso."
-      }
-    },
-    "_comentario_moedas_config": "Config POR MOEDA. 'grades' define quais grades cada moeda aceita. Se a moeda nao estiver aqui, usa 'grades_permitidas' global como fallback. Permite testar moedas volateis com filtros mais conservadores.",
+    "_comentario_moedas": "7 moedas (BTC/ETH removidos). Todas operam grades A/B/C. Grade C usa TP/SL reduzido (defensivo).",
     "timeframes": [
       "5m"
     ],
@@ -181,12 +171,13 @@
       "R7"
     ],
     "_comentario_regras": "Libera entradas boas que caem em grade None. R6=5m+1h a favor/15m neutro; R7=so 5m a favor (15m/1h neutros). Opcoes extras: R5 (5m neutro, 15m+1h a favor), R8 (so 15m a favor), R9 (conflito 5mx1h com VWAP a favor). NAO recomendado R3 (fallback).",
-    "max_posicoes": 2,
-    "_comentario_max_posicoes": "Maximo de 2 posicoes SIMULTANEAS no executor (4 moedas, mas max 2 abertas ao mesmo tempo).",
+    "max_posicoes": 7,
+    "_comentario_max_posicoes": "Maximo de 7 posicoes SIMULTANEAS (7 moedas × $50 = $350 usado, buffer $10).",
     "uma_ordem_por_moeda": true,
-    "margem_usdt": 70,
-    "_comentario_margem": "$70 por ordem. 2 posicoes simultaneas = $140 usado, $160 de buffer.",
-    "capital_total_usdt": 300,
+    "margem_usdt": 50,
+    "_comentario_margem": "$50 por ordem (reduzido de $70 para permitir mais posicoes simultaneas com capital expandido).",
+    "capital_total_usdt": 360,
+    "_comentario_capital": "$300 inicial + $60 aporte = $360 total.",
     "alavancagem_base": 5,
     "alavancagem_grade_a": 10,
     "_comentario_alav": "5x padrao; 10x apenas quando o catalisador der grade A (contexto forte).",
