@@ -431,8 +431,16 @@ def diag():
                 "sl_percent": round(controller.sl_percent * 100, 3),
             },
             "tp_sl_por_tf": {
-                tf: {"tp_percent": round(tp * 100, 3), "sl_percent": round(sl * 100, 3)}
-                for tf, (tp, sl) in getattr(controller, "tp_sl_por_tf", {}).items()
+                tf: {
+                    "tp_percent": round(cfg.get("tp_percent", 0.8), 3),
+                    "sl_percent": round(cfg.get("sl_percent", 1.1), 3),
+                    "grade_c": {
+                        "tp_percent": round(cfg.get("grade_c", {}).get("tp_percent", 0.5), 3),
+                        "sl_percent": round(cfg.get("grade_c", {}).get("sl_percent", 0.7), 3),
+                    } if "grade_c" in cfg else None
+                }
+                for tf, cfg in getattr(controller, "tp_sl_por_tf", {}).items()
+                if isinstance(cfg, dict)
             },
         },
         "contadores": {
