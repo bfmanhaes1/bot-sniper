@@ -166,6 +166,16 @@ class SimPosition:
 
 class CryptoShadowController:
     def __init__(self, config: Dict[str, Any], notifier=None):
+        # ---- CAMADA DE APRENDIZADO (self-learning) ----------------------
+        # Se existir learning_config.json, seus valores SOBRESCREVEM os
+        # padroes do config.json (mapeamento em learning_config.py). Se NAO
+        # existir, mesclar_config devolve o config original intacto — o bot
+        # funciona EXATAMENTE como antes (100% backwards-compatible).
+        try:
+            from learning_config import mesclar_config
+            config = mesclar_config(config)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Falha ao aplicar learning_config (sombra segue com config.json): %s", exc)
         self.cfg = config
         self.notifier = notifier
         self.moedas: List[str] = config.get("moedas", [])

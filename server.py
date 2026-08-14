@@ -580,6 +580,126 @@ def resumo():
                         "resumo_html": texto, "enviado_telegram": enviado})
 
 
+@app.route("/agent/metrics", methods=["GET"])
+def agent_metrics():
+    """Métricas para o agente self-learning (loop de reflexão).
+
+    Lê os trades do dia (PostgreSQL + fallback JSON) e calcula win_rate, P&L,
+    drawdown, breakdown por moeda e o score vs. metas do learning_config.json.
+
+    Query params:
+        dia: YYYY-MM-DD (default: hoje UTC)
+    """
+    dia = request.args.get("dia")
+    try:
+        import sys as _sys
+        _agent_dir = os.path.join(BASE_DIR, "agent")
+        if _agent_dir not in _sys.path:
+            _sys.path.insert(0, _agent_dir)
+        import agent_metrics  # type: ignore
+        metricas = agent_metrics.calcular_metricas(dia)
+        return jsonify(metricas)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[AGENT] Falha ao calcular métricas: %s", exc)
+        return jsonify({"erro": f"falha ao calcular métricas: {exc}"}), 500
+
+
+@app.route("/agent/apply_config", methods=["POST"])
+def agent_apply_config():
+    """Recebe e salva um novo learning_config.json (proposto pelo agente).
+
+    Body JSON esperado:
+        {"config": { ...novo learning_config... }, "hypothesis": "texto..."}
+
+    Salva o arquivo no disco (usado no próximo deploy) e tenta um HOT-RELOAD
+    best-effort dos parâmetros de sombra em uso pelo controlador. Se o
+    hot-reload falhar, a mudança ainda vale no próximo restart/deploy.
+    """
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except Exception:  # noqa: BLE001
+        body = {}
+    novo = body.get("config")
+    hypothesis = body.get("hypothesis") or body.get("hipotese") or ""
+    if not isinstance(novo, dict) or not novo:
+        return jsonify({"erro": "campo 'config' ausente ou inválido (esperado objeto JSON)"}), 400
+
+    try:
+        import learning_config as lc
+        # Metadados de auditoria
+        anterior = lc.carregar_learning_config() or {}
+        try:
+            ver_ant = int(str(anterior.get("version", "0")))
+        except (TypeError, ValueError):
+            ver_ant = 0
+        if "version" not in novo:
+            novo["version"] = f"{ver_ant + 1:02d}"
+        novo["updated_at"] = datetime.now(timezone.utc).isoformat()
+        novo["updated_by"] = "agent"
+        if hypothesis:
+            novo["hypothesis"] = hypothesis
+
+        ok = lc.salvar_learning_config(novo)
+        if not ok:
+            return jsonify({"erro": "falha ao salvar learning_config.json"}), 500
+
+        # ---- HOT-RELOAD best-effort dos parâmetros de sombra em uso --------
+        hot_reload = False
+        detalhes_reload = None
+        try:
+            cfg_merge = lc.mesclar_config(CONFIG)
+            # TP/SL por TF (usados no cálculo de saída em sombra)
+            novo_tp_sl = {}
+            for _tf, _cfg in (cfg_merge.get("simulacao_por_tf") or {}).items():
+                if str(_tf).startswith("_") or not isinstance(_cfg, dict):
+                    continue
+                novo_tp_sl[_tf] = _cfg
+            controller.tp_sl_por_tf = novo_tp_sl
+            sim = cfg_merge.get("simulacao", {}) or {}
+            controller.margin_usdt = float(sim.get("margin_usdt", controller.margin_usdt))
+            # Executor real (mesmo pausado, mantém os parâmetros coerentes)
+            if getattr(controller, "executor_real", None) is not None:
+                er = controller.executor_real
+                exr = cfg_merge.get("execucao_real", {}) or {}
+                er.moedas = [m.upper() for m in exr.get("moedas", er.moedas)]
+                er.timeframes = list(exr.get("timeframes", er.timeframes))
+                er.grades_permitidas = list(exr.get("grades_permitidas", er.grades_permitidas))
+                er.max_posicoes = int(exr.get("max_posicoes", er.max_posicoes))
+                er.margem_usdt = float(exr.get("margem_usdt", er.margem_usdt))
+                er.alav_base = int(exr.get("alavancagem_base", er.alav_base))
+                er.alav_grade_a = int(exr.get("alavancagem_grade_a", er.alav_grade_a))
+            hot_reload = True
+            detalhes_reload = {
+                "tp_sl_por_tf": novo_tp_sl,
+                "margin_usdt": controller.margin_usdt,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[AGENT] Hot-reload parcial/falhou (mudança vale no próximo deploy): %s", exc)
+
+        logger.warning("[AGENT] learning_config v%s aplicado (hot_reload=%s). Hipótese: %s",
+                       novo.get("version"), hot_reload, hypothesis)
+        if notifier is not None:
+            try:
+                notifier.send(f"🤖 <b>Agente aplicou learning_config v{novo.get('version')}</b>\n"
+                              f"Hipótese: {hypothesis or '(sem descrição)'}\n"
+                              f"Hot-reload: {'sim' if hot_reload else 'não (vale no próximo deploy)'}")
+            except Exception:  # noqa: BLE001
+                pass
+
+        return jsonify({
+            "ok": True,
+            "version": novo.get("version"),
+            "updated_at": novo["updated_at"],
+            "hypothesis": hypothesis,
+            "hot_reload": hot_reload,
+            "detalhes_reload": detalhes_reload,
+            "nota": "Salvo. Aplica em sombra imediatamente (hot-reload) e/ou no próximo deploy do Railway.",
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[AGENT] Falha em apply_config: %s", exc)
+        return jsonify({"erro": f"falha ao aplicar config: {exc}"}), 500
+
+
 @app.route("/webhook/<moeda>", methods=["POST"])
 def webhook(moeda: str):
     """

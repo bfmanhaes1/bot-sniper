@@ -1,0 +1,62 @@
+{
+  "_comentario": "CAMADA DE APRENDIZADO (self-learning). Este arquivo e a UNICA superficie que o agente de IA pode ajustar para tentar maximizar o lucro. Se este arquivo NAO existir, o bot funciona EXATAMENTE como antes (100% backwards-compatible), usando so o config.json. Quando ele existe, seus valores SOBRESCREVEM os padroes correspondentes do config.json (mapeamento em learning_config.py). VALORES INICIAIS = valores atuais do bot (nenhuma mudanca de comportamento na criacao).",
+  "version": "01",
+  "updated_at": "2026-08-13T00:00:00Z",
+  "updated_by": "manual",
+  "hypothesis": "Estado inicial — espelha exatamente o config.json atual. Nenhuma alteracao de comportamento.",
+
+  "moedas_focadas": ["SOL", "VIRTUAL", "AVAX", "NEAR", "LINK", "APT", "BNB"],
+  "_comentario_moedas_focadas": "Moedas que a EXECUCAO REAL pode operar (mapeia para execucao_real.moedas). Inicial = as 7 moedas reais atuais. Metas do usuario destacam SOL, BNB e APT como as de melhor performance.",
+
+  "tp_sl_por_tf": {
+    "1m":  {"tp_percent": 0.50, "sl_percent": 0.60},
+    "5m":  {"tp_percent": 0.80, "sl_percent": 1.10},
+    "15m": {"tp_percent": 1.00, "sl_percent": 1.30}
+  },
+  "_comentario_tp_sl": "TP/SL simulado (sombra) por timeframe. Mapeia para config.simulacao_por_tf[tf].tp_percent/sl_percent. Valores em % sobre o preco de entrada, ja com margem p/ taxas Bitget (0.12%). O agente pode subir/descer para buscar o alvo de ~$1-1.50 por trade. TFs nao listados aqui (30s/45s) preservam os valores do config.json.",
+
+  "grades_operar": ["A", "B", "C"],
+  "_comentario_grades_operar": "Grades do catalisador que a execucao real aceita. Mapeia para execucao_real.grades_permitidas. Inicial = A/B/C (atual).",
+
+  "grades_dobrar": [],
+  "_comentario_grades_dobrar": "Grades que abririam 2 ordens (dobrar posicao). O bot crypto atual NAO tem logica de dobrar (uma_ordem_por_moeda=true), entao este campo e apenas informativo/reservado para o agente — nao altera comportamento hoje. Inicial = [] (nenhuma).",
+
+  "leverage_por_grade": {"A": 10, "B": 5, "C": 5},
+  "_comentario_leverage": "Alavancagem por grade. Mapeia: grade A -> execucao_real.alavancagem_grade_a; demais -> execucao_real.alavancagem_base. Inicial = A:10x, B/C:5x (atual).",
+
+  "margem_usdt": 50,
+  "_comentario_margem": "Margem por ordem em USDT. Mapeia para execucao_real.margem_usdt E config.simulacao.margin_usdt. Inicial = $50. Meta do usuario: ~$1/trade com $50, ~$1.50/trade com $100.",
+
+  "max_posicoes": 7,
+  "_comentario_max_posicoes": "Maximo de posicoes reais simultaneas. Mapeia para execucao_real.max_posicoes. Inicial = 7.",
+
+  "janela_entradas_seg": 20,
+  "_comentario_janela": "Janela de reconciliacao gatilho x catalisador (segundos). Mapeia para config.reconciliacao.janela_seg. Inicial = 20 (atual).",
+
+  "timeframes_ativos": ["1m", "5m"],
+  "_comentario_tfs": "Timeframes que a EXECUCAO REAL opera. Mapeia para execucao_real.timeframes. Inicial = 1m e 5m (atual). NAO afeta a coleta em sombra (que segue com 30s/45s/1m/5m/15m do config.json). O agente pode subir o TF e usar TP/SL do TF inferior para aumentar a taxa de acerto.",
+
+  "estrategia_tf": "normal",
+  "_comentario_estrategia_tf": "Campo informativo p/ o agente registrar a estrategia de timeframe em uso (ex.: 'normal', 'tp_sl_inferior'). Nao altera comportamento diretamente.",
+
+  "metas": {
+    "lucro_min_diario_pct": 5.0,
+    "dd_max_pct": 22.5,
+    "win_rate_min_pct": 55.0,
+    "lucro_por_trade_alvo_usd": 1.0,
+    "trades_min_dia_por_moeda": 5
+  },
+  "_comentario_metas": "Metas do usuario (consumidas pelo agent_metrics.py para calcular o score). Lucro minimo diario 5% por moeda; DD maximo 20-25% (media 22.5%); win rate alvo >= 55%; ~$1 de lucro por trade; ~5 trades/dia por moeda.",
+
+  "gestao_capital": {
+    "meta_capital_usd": 10000.0,
+    "ate_meta": "capitalizar_100pct",
+    "apos_meta": {
+      "reinvestir_pct": 50.0,
+      "reinvestir_em": "cripto_carteira",
+      "retirada_pct": 50.0,
+      "retirada_frequencia": "diaria_ou_semanal"
+    }
+  },
+  "_comentario_gestao_capital": "POLITICA DE CAPITAL (informativa — sera aplicada pelo daemon self-learning na proxima etapa; NAO altera a logica de trades desta camada). Ate o capital atingir $10.000, 100% do lucro e CAPITALIZADO (reinvestido). Depois de $10.000: 50% do lucro diario COMPRA as criptos ja indicadas pelo usuario (carteira) e 50% fica para RETIRADA diaria/semanal como fonte de renda."
+}

@@ -45,6 +45,15 @@ class ExecutorReal:
                  data_dir: Optional[str] = None):
         self.log = logger
         self.notifier = notifier
+        # ---- CAMADA DE APRENDIZADO (self-learning) ----------------------
+        # Aplica os overrides do learning_config.json (se existir) sobre o
+        # config recebido. Se o arquivo NAO existir, mesclar_config devolve o
+        # config original intacto — comportamento 100% preservado.
+        try:
+            from learning_config import mesclar_config
+            config = mesclar_config(config)
+        except Exception as exc:  # noqa: BLE001
+            self.log.error("[EXEC-REAL] Falha ao aplicar learning_config (usando config.json): %s", exc)
         cfg = (config or {}).get("execucao_real", {}) or {}
         self.cfg = cfg
 

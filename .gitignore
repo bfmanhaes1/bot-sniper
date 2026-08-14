@@ -16,3 +16,7 @@ GUIA_CONFIRMACAO_SNIPER.docx_preview/
 # Artefato local do estudo (não versionar)
 estudo_tpsl.jsonl
 crypto2_logs/
+
+# Estado de runtime do agente self-learning (efemero)
+agent/agent_state.json
+*.tmp
