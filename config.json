@@ -13,6 +13,14 @@
   "_comentario_modo_autonomo_desligado": "O modo_autonomo (proxy WaveTrend/HMA/RSI) foi DESLIGADO de proposito: ele nao reproduz o TSTS real (que dispara de forma irregular, sem cadencia fixa). O codigo do scanner continua no repo apenas como referencia/experimento, mas NAO roda enquanto modo_autonomo=false.",
   "dedup_sinal_segundos": 90,
   "_comentario_dedup": "Ignora um SINAL identico (moeda+tf+acao) repetido dentro desta janela (protege contra duplicacao caso scanner e webhook coincidam).",
+  "rsi_puro": {
+    "ativa": true,
+    "_comentario": "BRACO DE ESTUDO em SOMBRA. Em paralelo ao fluxo normal (TSTS + RSI + catalisador), abre uma simulacao SO com o cruzamento do RSI (up->buy, down->sell), sem exigir o TSTS e sem o gate do catalisador. Usa os MESMOS TP/SL e a MESMA fonte de preco. NUNCA envia ordem real. Grava no livro-razao do estudo com estrategia='rsi_puro' (o fluxo normal fica como 'tsts_rsi'). Serve para comparar com NUMEROS se o RSI puro e melhor/pior que o setup completo. Compare em /comparacao.",
+    "moedas": [],
+    "_comentario_moedas": "Vazio = usa TODAS as moedas monitoradas. Ou liste um subconjunto (ex.: [\"SOL\",\"BNB\"]).",
+    "timeframes": [],
+    "_comentario_timeframes": "Vazio = usa TODOS os timeframes monitorados. Ou liste um subconjunto (ex.: [\"5m\"])."
+  },
   "scanner": {
     "intervalo_segundos": 25,
     "_comentario_intervalo": "De quanto em quanto tempo o scanner varre as 30 combinacoes moeda+TF. Cada combinacao so gera sinal quando um NOVO candle FECHA (Once Per Bar Close).",

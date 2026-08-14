@@ -448,6 +448,12 @@ def diag():
             "rsi_cross": controller.contador_rsi,
             "entradas_simuladas": controller.contador_entradas_sim,
         },
+        "rsi_puro": {
+            "ativa": getattr(controller, "rsi_puro_ativa", None),
+            "entradas": getattr(controller, "contador_rsi_puro_entradas", None),
+            "saidas": getattr(controller, "contador_rsi_puro_saidas", None),
+            "posicoes_abertas": len(getattr(controller, "_positions_rsi", {})),
+        },
         "confirmacao": controller.confirm.snapshot() if getattr(controller, "confirm", None) else None,
         "catalyst": controller.catalyst.snapshot() if getattr(controller, "catalyst", None) else None,
         "timeframes": controller.timeframes,
@@ -601,6 +607,20 @@ def estudo():
             linhas = [r for r in linhas if r.get("tf") == tf]
         resp["linhas"] = linhas
     return jsonify(resp)
+
+
+@app.route("/comparacao", methods=["GET"])
+def comparacao():
+    """
+    Compara os DOIS braços de estudo lado a lado, a partir do livro-razão:
+      - tsts_rsi = fluxo completo (TSTS Sniper + RSI + catalisador)
+      - rsi_puro = SÓ o cruzamento do RSI (sem TSTS, sem catalisador)
+    Métricas por braço: n, wins/losses, win_rate_pct, pnl_medio_pct, pnl_total_pct.
+    Também quebra por MOEDA_TF. Query param opcional: dia=AAAA-MM-DD.
+    OBS: amostra pequena não é conclusiva — deixe rodar vários dias antes de decidir.
+    """
+    dia = request.args.get("dia")
+    return jsonify(controller.comparar_estrategias(dia))
 
 
 @app.route("/limpar_logs", methods=["POST"])

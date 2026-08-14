@@ -271,6 +271,26 @@ class CryptoShadowController:
         # chave "MOEDA_TF_ACTION" -> dict com o gatilho guardado
         self._reconc: Dict[str, Dict[str, Any]] = {}
 
+        # ---- BRAÇO DE ESTUDO "RSI PURO" (comparação em sombra) --------------
+        # Em PARALELO ao fluxo normal (TSTS + RSI + catalisador), este braço
+        # abre uma simulação SÓ com base no CRUZAMENTO DO RSI (up->buy, down->sell),
+        # SEM exigir o TSTS e SEM o gate do catalisador. Objetivo: medir, com os
+        # MESMOS TP/SL e a MESMA fonte de preço, se o RSI puro é melhor/pior que
+        # o setup completo — e decidir com NÚMEROS se vale aposentar um alerta.
+        # NUNCA envia ordem real (é só estudo). Grava no MESMO livro-razão do
+        # estudo, marcado com estrategia="rsi_puro". O fluxo normal passa a ser
+        # marcado com estrategia="tsts_rsi".
+        _rp = config.get("rsi_puro", {}) or {}
+        self.rsi_puro_ativa: bool = bool(_rp.get("ativa", False))
+        _rp_moedas = [str(m).upper() for m in (_rp.get("moedas") or [])]
+        _rp_tfs = [str(t) for t in (_rp.get("timeframes") or [])]
+        # Vazio = usa todas as moedas/timeframes monitorados.
+        self.rsi_puro_moedas: List[str] = _rp_moedas or list(self.moedas)
+        self.rsi_puro_tfs: List[str] = _rp_tfs or list(self.timeframes)
+        self._positions_rsi: Dict[str, SimPosition] = {}   # chave = MOEDA_TF
+        self.contador_rsi_puro_entradas = 0
+        self.contador_rsi_puro_saidas = 0
+
         # Camada de EXECUÇÃO REAL (dinheiro real na Bitget). Roda EM PARALELO à
         # sombra. MASTER SWITCH em config["execucao_real"]["ativa"] (padrão OFF).
         # Se qualquer coisa falhar aqui, a sombra continua normalmente.
@@ -818,6 +838,7 @@ class CryptoShadowController:
             else:
                 tp_pct_cfg, sl_pct_cfg = self.tp_percent, self.sl_percent
             crypto_logger.registrar_estudo({
+                "estrategia": "tsts_rsi",   # fluxo completo: TSTS + RSI + catalisador
                 "moeda": pos.moeda, "tf": pos.tf,
                 "direcao": "LONG" if pos.action == "buy" else "SHORT",
                 "entry": round(pos.entry, 8),
@@ -924,6 +945,15 @@ class CryptoShadowController:
         rsi_ma = _safe_float(data.get("rsi_ma") or data.get("rsi_media"))
         entry = self._preco_entrada(moeda, data)
 
+        # BRAÇO DE ESTUDO "RSI PURO" (paralelo, só sombra): abre/vira uma
+        # simulação SÓ com o cruzamento do RSI, sem TSTS e sem catalisador.
+        # Falha aqui nunca afeta o fluxo normal abaixo.
+        try:
+            self._rsi_puro_on_cross(moeda, tf, direction, entry)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[RSI-PURO] erro em %s %s (fluxo normal segue): %s",
+                         moeda, tf, exc)
+
         eng = self._engine(moeda, tf)
         decisao = eng.on_rsi_cross(moeda, direction, timeframe=tf)
         action = decisao.get("action") or ("buy" if direction == "up" else "sell")
@@ -942,6 +972,185 @@ class CryptoShadowController:
             px = preco or self._preco_publico(moeda) or pos.entry
             self._fechar_simulacao(pos, px, "reversao")
 
+    # ================================================================== #
+    #  BRAÇO DE ESTUDO "RSI PURO" (paralelo, só sombra)                   #
+    # ================================================================== #
+    def _rsi_puro_permitido(self, moeda: str, tf: str) -> bool:
+        return (self.rsi_puro_ativa
+                and moeda in self.rsi_puro_moedas
+                and tf in self.rsi_puro_tfs)
+
+    def _rsi_puro_on_cross(self, moeda: str, tf: str, direction: str,
+                           entry: Optional[float]) -> None:
+        """
+        Abre/vira uma simulação baseada SÓ no cruzamento do RSI (up->buy,
+        down->sell). Independente do TSTS e do catalisador. NUNCA toca no
+        executor real. Anti-empilhamento: um cruzamento na MESMA direção de uma
+        posição já aberta é ignorado; na direção OPOSTA, fecha a atual (reversão)
+        e abre a nova.
+        """
+        if not self._rsi_puro_permitido(moeda, tf):
+            return
+        if not entry or entry <= 0:
+            return
+        action = "buy" if direction == "up" else "sell"
+        chave = f"{moeda}_{tf}"
+        with self._lock:
+            atual = self._positions_rsi.get(chave)
+        # Reversão: fecha a posição oposta ao preço atual e registra.
+        if atual is not None:
+            if atual.action == action:
+                return  # mesma direção -> não empilha
+            self._rsi_puro_fechar(atual, entry, "reversao")
+        tp, sl = self._tp_sl(action, entry, tf, None)
+        pos = SimPosition(moeda, tf, action, entry, tp, sl, 1, None, "rsi_puro")
+        with self._lock:
+            self._positions_rsi[chave] = pos
+            self.contador_rsi_puro_entradas += 1
+        logger.info("[RSI-PURO] %s %s: abre %s @ %.8f (tp=%.8f sl=%.8f)",
+                    moeda, tf, action.upper(), entry, tp, sl)
+
+    def _rsi_puro_fechar(self, pos: SimPosition, exit_price: float,
+                         motivo: str) -> None:
+        """Fecha uma posição do braço RSI-puro, grava 1 linha no livro-razão do
+        estudo (estrategia='rsi_puro') e remove a posição."""
+        if pos.estudo_registrado:
+            with self._lock:
+                self._positions_rsi.pop(pos.chave(), None)
+            return
+        if pos.action == "buy":
+            pnl_pct = (exit_price - pos.entry) / pos.entry * 100.0
+        else:
+            pnl_pct = (pos.entry - exit_price) / pos.entry * 100.0
+        mfe_pct, dd_pct, high_usado, low_usado = self._calcular_dd_mfe(pos)
+        janela_min = round((_now() - pos.aberta_em).total_seconds() / 60.0, 1)
+        cfg_tf = self.tp_sl_por_tf.get(pos.tf, {})
+        if isinstance(cfg_tf, dict):
+            tp_pct_cfg = cfg_tf.get("tp_percent", self.tp_percent * 100) / 100.0
+            sl_pct_cfg = cfg_tf.get("sl_percent", self.sl_percent * 100) / 100.0
+        else:
+            tp_pct_cfg, sl_pct_cfg = self.tp_percent, self.sl_percent
+        crypto_logger.registrar_estudo({
+            "estrategia": "rsi_puro",   # só cruzamento de RSI (sem TSTS/catalisador)
+            "moeda": pos.moeda, "tf": pos.tf,
+            "direcao": "LONG" if pos.action == "buy" else "SHORT",
+            "entry": round(pos.entry, 8),
+            "aberta_em": pos.aberta_em.isoformat(),
+            "fechou_em": _now().isoformat(),
+            "janela_min": janela_min,
+            "cruzamento": 1,
+            "catalyst_grade": None,
+            "catalyst_regra": "rsi_puro",
+            "mfe_pct": mfe_pct,
+            "dd_pct": dd_pct,
+            "high_periodo": round(high_usado, 8),
+            "low_periodo": round(low_usado, 8),
+            "saida_tpsl": motivo,
+            "exit_price": round(exit_price, 8),
+            "pnl_pct": round(pnl_pct, 4),
+            "tp_percent_cfg": round(tp_pct_cfg * 100, 4),
+            "sl_percent_cfg": round(sl_pct_cfg * 100, 4),
+        })
+        pos.estudo_registrado = True
+        with self._lock:
+            self.contador_rsi_puro_saidas += 1
+            self._positions_rsi.pop(pos.chave(), None)
+        logger.info("[RSI-PURO] %s %s: fecha %s por %s (pnl=%.3f%%)",
+                    pos.moeda, pos.tf, pos.action.upper(), motivo, pnl_pct)
+
+    def _verificar_tp_sl_rsi_puro(self) -> int:
+        """Percorre as posições do braço RSI-puro e fecha por TP/SL/timeout."""
+        with self._lock:
+            posicoes = list(self._positions_rsi.values())
+        agora = _now()
+        timeout_min = self._eng_settings.get("posicao_timeout_min", 240)
+        fechadas = 0
+        for pos in posicoes:
+            px = self._preco_publico(pos.moeda, use_cache=False)
+            if px:
+                pos.registrar_preco(px)
+                if pos.action == "buy":
+                    if px >= pos.tp:
+                        self._rsi_puro_fechar(pos, pos.tp, "TP"); fechadas += 1; continue
+                    if px <= pos.sl:
+                        self._rsi_puro_fechar(pos, pos.sl, "SL"); fechadas += 1; continue
+                else:
+                    if px <= pos.tp:
+                        self._rsi_puro_fechar(pos, pos.tp, "TP"); fechadas += 1; continue
+                    if px >= pos.sl:
+                        self._rsi_puro_fechar(pos, pos.sl, "SL"); fechadas += 1; continue
+            if (agora - pos.aberta_em).total_seconds() >= timeout_min * 60:
+                self._rsi_puro_fechar(pos, px or pos.entry, "timeout"); fechadas += 1
+        return fechadas
+
+    def comparar_estrategias(self, dia: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Lê o livro-razão do estudo e compara os dois braços por 'estrategia':
+          - tsts_rsi (fluxo completo)  vs  rsi_puro (só cruzamento de RSI).
+        Registros antigos sem o campo 'estrategia' contam como 'tsts_rsi' (legado).
+        Métricas por braço: n, wins, win_rate_pct, pnl_medio_pct, pnl_total_pct,
+        expectancia (média do pnl%). Também quebra por MOEDA_TF.
+        """
+        regs = crypto_logger.ler_estudo()
+        if dia:
+            regs = [r for r in regs if str(r.get("fechou_em", "")).startswith(dia)]
+
+        def _pnl(r: Dict[str, Any]) -> Optional[float]:
+            if r.get("pnl_pct") is not None:
+                try:
+                    return float(r["pnl_pct"])
+                except (TypeError, ValueError):
+                    return None
+            entry = r.get("entry"); exit_p = r.get("exit_price")
+            if entry in (None, 0) or exit_p is None:
+                return None
+            try:
+                entry = float(entry); exit_p = float(exit_p)
+            except (TypeError, ValueError):
+                return None
+            if entry <= 0:
+                return None
+            if (r.get("direcao") or "").upper() == "SHORT":
+                return (entry - exit_p) / entry * 100.0
+            return (exit_p - entry) / entry * 100.0
+
+        def _stats(rs: List[Dict[str, Any]]) -> Dict[str, Any]:
+            pnls = [p for p in (_pnl(r) for r in rs) if p is not None]
+            n = len(pnls)
+            wins = sum(1 for p in pnls if p > 0)
+            return {
+                "n_registrados": len(rs),
+                "n_com_resultado": n,
+                "wins": wins,
+                "losses": n - wins,
+                "win_rate_pct": round(wins / n * 100, 2) if n else None,
+                "pnl_medio_pct": round(sum(pnls) / n, 4) if n else None,
+                "pnl_total_pct": round(sum(pnls), 4) if n else None,
+            }
+
+        braços: Dict[str, List[Dict[str, Any]]] = {"tsts_rsi": [], "rsi_puro": []}
+        por_combo: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+        for r in regs:
+            est = r.get("estrategia") or "tsts_rsi"
+            if est not in braços:
+                braços[est] = []
+            braços[est].append(r)
+            combo = f"{r.get('moeda', '?')}_{r.get('tf', '?')}"
+            por_combo.setdefault(combo, {"tsts_rsi": [], "rsi_puro": []})
+            por_combo[combo].setdefault(est, []).append(r)
+
+        return {
+            "dia": dia or "tudo",
+            "rsi_puro_ativa": self.rsi_puro_ativa,
+            "total_registros": len(regs),
+            "por_estrategia": {k: _stats(v) for k, v in braços.items()},
+            "por_combinacao": {
+                combo: {k: _stats(v) for k, v in dic.items()}
+                for combo, dic in sorted(por_combo.items())
+            },
+        }
+
+    # ------------------------------------------------------------------ #
     def _processar_decisao(self, moeda, tf, action, sinal_txt, rsi, rsi_ma, entry,
                            decisao: Dict[str, Any], origem: str,
                            direction: str = "") -> Dict[str, Any]:
@@ -1062,6 +1271,12 @@ class CryptoShadowController:
              por segurança, encerra por posicao_timeout_min).
         Chamado periodicamente pelo monitor. Retorna quantas foram finalizadas.
         """
+        # Braço de estudo RSI-puro (paralelo). Falha aqui não afeta o principal.
+        try:
+            self._verificar_tp_sl_rsi_puro()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[RSI-PURO] erro no monitor (principal segue): %s", exc)
+
         with self._lock:
             posicoes = list(self._positions.values())
         finalizadas = 0
@@ -1277,6 +1492,14 @@ class CryptoShadowController:
                 "janela_min_por_tf": self.estudo_janela_min,
                 "janela_min_default": self.estudo_janela_default,
                 "total_entradas_gravadas": len(crypto_logger.ler_estudo()),
+            },
+            "rsi_puro": {
+                "ativa": self.rsi_puro_ativa,
+                "moedas": self.rsi_puro_moedas,
+                "timeframes": self.rsi_puro_tfs,
+                "entradas": self.contador_rsi_puro_entradas,
+                "saidas": self.contador_rsi_puro_saidas,
+                "posicoes_abertas": len(self._positions_rsi),
             },
             "confirmacao": self.confirm.snapshot() if getattr(self, "confirm", None) else None,
             "catalyst": self.catalyst.snapshot() if getattr(self, "catalyst", None) else None,
