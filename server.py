@@ -490,6 +490,80 @@ def registro():
                     "registros": crypto_logger.ler_dia(dia)})
 
 
+ADMIN_TEST_TOKEN = os.environ.get("ADMIN_TEST_TOKEN", "teste-real-sniper-2026")
+
+
+@app.route("/admin/test_order", methods=["POST"])
+def admin_test_order():
+    """TESTE DE CONEXÃO REAL (bypassa alertas). Envia UMA ordem MARKET real na
+    Bitget usando o mesmo bitget_client do bot. Protegido por token. NÃO depende
+    de execucao_real.ativa nem de sinal do TradingView — disparo manual controlado
+    só para provar que a conta/credenciais funcionam.
+
+    Body JSON: {"token":"...", "moeda":"VIRTUAL", "action":"buy",
+                "leverage":5, "margem_usdt":50}
+    """
+    data = request.get_json(silent=True) or {}
+    if data.get("token") != ADMIN_TEST_TOKEN:
+        return jsonify({"ok": False, "erro": "token inválido"}), 403
+    moeda = str(data.get("moeda") or "VIRTUAL").upper()
+    action = str(data.get("action") or "buy").lower()
+    lev = int(data.get("leverage") or 5)
+    margem = float(data.get("margem_usdt") or 50)
+    symbol = CONFIG.get("symbols_bitget", {}).get(moeda)
+    if not symbol:
+        return jsonify({"ok": False, "erro": f"sem símbolo para {moeda}"}), 400
+    try:
+        from bitget_client import build_client_from_config
+        client = build_client_from_config(CONFIG)
+        client.dry_run = False  # FORÇA real só para este teste
+        price = client.get_ticker_price(symbol)
+        if not price or price <= 0:
+            return jsonify({"ok": False, "erro": "preço indisponível", "symbol": symbol}), 400
+        qty = client.round_qty(symbol, (margem * lev) / price)
+        if qty <= 0:
+            return jsonify({"ok": False, "erro": "qty calculada <= 0", "price": price}), 400
+        r = client.place_order(symbol, action, qty, leverage=lev)
+        ok = str(r.get("code")) == "00000"
+        logger.warning("[ADMIN TEST] ordem real %s %s qty=%s lev=%sx price=%s -> code=%s",
+                       symbol, action, qty, lev, price, r.get("code"))
+        return jsonify({"ok": ok, "symbol": symbol, "action": action, "price": price,
+                        "qty": qty, "leverage": lev, "margem_usdt": margem, "resposta": r})
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[ADMIN TEST] falha: %s", exc)
+        return jsonify({"ok": False, "erro": str(exc)}), 500
+
+
+@app.route("/admin/test_close", methods=["POST"])
+def admin_test_close():
+    """Fecha (reduce-only) a posição real da moeda — rede de segurança.
+    Body: {"token":"...", "moeda":"VIRTUAL"}."""
+    data = request.get_json(silent=True) or {}
+    if data.get("token") != ADMIN_TEST_TOKEN:
+        return jsonify({"ok": False, "erro": "token inválido"}), 403
+    moeda = str(data.get("moeda") or "VIRTUAL").upper()
+    symbol = CONFIG.get("symbols_bitget", {}).get(moeda)
+    if not symbol:
+        return jsonify({"ok": False, "erro": f"sem símbolo para {moeda}"}), 400
+    try:
+        from bitget_client import build_client_from_config
+        client = build_client_from_config(CONFIG)
+        client.dry_run = False
+        posicoes = (client.get_open_positions(symbol).get("data") or [])
+        fechadas = []
+        for p in posicoes:
+            if p.get("symbol") != symbol:
+                continue
+            total = float(p.get("total", 0) or 0)
+            if total <= 0:
+                continue
+            side = "sell" if (p.get("holdSide") or "").lower() == "long" else "buy"
+            fechadas.append(client.place_order(symbol, side, total, reduce_only=True))
+        return jsonify({"ok": True, "symbol": symbol, "fechadas": len(fechadas), "respostas": fechadas})
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "erro": str(exc)}), 500
+
+
 @app.route("/estudo", methods=["GET"])
 def estudo():
     """
