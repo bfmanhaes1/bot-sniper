@@ -165,9 +165,9 @@
   },
   "execucao_real": {
     "_comentario_execucao_real": "CAMADA DE EXECUCAO REAL (dinheiro de verdade). 'ativa' e o MASTER SWITCH: com false (padrao) NADA executa, o bot segue 100% em sombra. Com 'ativa':true mas 'dry_run':true, as chamadas a Bitget sao SIMULADAS (validacao sem risco). So vira dinheiro real com ativa=true E dry_run=false.",
-    "_PAUSADO_EM": "2026-08-11 — SNIPER PAUSADO a pedido: execucao real desligada (ativa=false) para migrar a execucao real para o Catabot crypto. Para religar o SNIPER, volte ativa=true (e revise dry_run).",
-    "ativa": false,
-    "dry_run": true,
+    "_PAUSADO_EM": "2026-08-14 — SNIPER RELIGADO a pedido: execucao real AO VIVO (ativa=true, dry_run=false). Catabot crypto permanece em sombra.",
+    "ativa": true,
+    "dry_run": false,
     "_comentario_dry_run": "⚠️ DINHEIRO REAL! false = ordens REAIS na Bitget. true = simulacao (validacao segura).",
     "moedas": [
       "SOL",
